@@ -97,6 +97,34 @@ describe("installResultDelivery", () => {
     assert.ok(calls[0].content.includes("50.0K tok"), "should show the token count (input+output)");
     assert.ok(!calls[0].content.includes("cached"), "omits the cached segment when cacheRead is 0");
     assert.ok(calls[0].content.includes("1.5s"), "should contain 1.5s");
+    // Honest outcome counts: an all-healthy run reads "N ok" with no failed segment.
+    assert.ok(calls[0].content.includes("3 agents: 3 ok"), "shows honest ok count");
+    assert.ok(!/failed/.test(calls[0].content), "no failed segment when nothing failed");
+  });
+
+  it("carries honest ok/failed counts in the completion line when agents failed", () => {
+    const pi = createMockPi();
+    // A run whose synthesis was built on silently-nulled failed agents must say so.
+    const manager = createMockManager(
+      makeRun({
+        snapshot: {
+          name: "test-workflow",
+          agentCount: 3,
+          agents: [
+            { id: "a1", status: "done" },
+            { id: "a2", status: "error" },
+            { id: "a3", status: "error" },
+          ],
+        },
+        result: { agentCount: 3, durationMs: 1500, result: { verdict: "done" } },
+      }),
+    );
+
+    mod.installResultDelivery(pi as unknown as ExtensionAPI, manager);
+    manager.emit("complete", { runId: "test-run-1" });
+
+    const content = (pi as unknown as { _calls: { content: string }[] })._calls[0].content;
+    assert.ok(content.includes("3 agents: 1 ok, 2 failed"), `honest counts, got: ${content}`);
   });
 
   it("shows the fresh/cache split and cost in the delivery line", () => {
@@ -417,6 +445,77 @@ describe("installResultDelivery", () => {
     assert.equal(calls1.length, 0, "pi1 should not be used after refresh");
     assert.equal(calls2.length, 1, "pi2 should receive the delivery");
   });
+
+  // ── Failure UX: abort suppression, coded failure text, notify ──
+
+  it("suppresses the failure message for a user-stopped run (aborted status)", () => {
+    const pi = createMockPi();
+    const manager = createMockManager(makeRun({ status: "aborted" }));
+
+    mod.installResultDelivery(pi as unknown as ExtensionAPI, manager);
+    manager.emit("error", { runId: "test-run-1", error: { message: "workflow aborted", code: "WORKFLOW_ABORTED" } });
+
+    const calls = (pi as unknown as { _calls: { content: string }[] })._calls;
+    assert.equal(calls.length, 0, "a manual stop is a user action, not a failure to report");
+  });
+
+  it("delivers the coded failure text with a resume hint for a real failure", () => {
+    const pi = createMockPi();
+    const manager = createMockManager(makeRun({ status: "failed" }));
+
+    mod.installResultDelivery(pi as unknown as ExtensionAPI, manager);
+    manager.emit("error", {
+      runId: "test-run-1",
+      error: { message: "subagent timed out", code: "AGENT_TIMEOUT", recoverable: true },
+    });
+
+    const calls = (pi as unknown as { _calls: { content: string }[] })._calls;
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].content.includes("[AGENT_TIMEOUT]"), "machine error code shown");
+    assert.ok(calls[0].content.includes("subagent timed out"), "message shown");
+    assert.ok(calls[0].content.includes("/workflows resume test-run-1"), "resume is the named next action");
+  });
+
+  it("notifies on terminal states when a notify handler is provided", () => {
+    const pi = createMockPi();
+    const notes: Array<{ message: string; type?: string }> = [];
+    const manager = createMockManager(makeRun({ status: "completed" }));
+
+    mod.installResultDelivery(pi as unknown as ExtensionAPI, manager, {
+      notify: (message: string, type?: string) => notes.push({ message, type }),
+    });
+    manager.emit("complete", { runId: "test-run-1" });
+
+    assert.ok(
+      notes.some((n) => n.type === "info" && n.message.includes("test-workflow")),
+      `completion banner fired: ${JSON.stringify(notes)}`,
+    );
+  });
+
+  it("falls back to notify when chat delivery fails (stale ctx)", () => {
+    const pi = {
+      sendMessage: () => {
+        throw new Error("This extension ctx is stale");
+      },
+      registerTool: () => {},
+      on: () => {},
+      getActiveTools: () => [],
+      setActiveTools: () => {},
+      reload: () => Promise.resolve(),
+    };
+    const notes: Array<{ message: string; type?: string }> = [];
+    const manager = createMockManager(makeRun({ status: "completed" }));
+
+    mod.installResultDelivery(pi as unknown as ExtensionAPI, manager, {
+      notify: (message: string, type?: string) => notes.push({ message, type }),
+    });
+    manager.emit("complete", { runId: "test-run-1" });
+
+    assert.ok(
+      notes.some((n) => n.type === "warning" && n.message.includes("could not be delivered")),
+      `fallback warning fired: ${JSON.stringify(notes)}`,
+    );
+  });
 });
 
 // ─── installTaskPanel ─────────────────────────────────────────────────────────
@@ -553,42 +652,49 @@ describe("renderPanel", () => {
       assert.ok(visibleWidth(line) <= 42, `line exceeds width: ${visibleWidth(line)} > 42`);
     }
   });
+
+  it("appends a red '✗ N failed' line beneath a run with failed agents", async () => {
+    const { renderPanel } = await import("../src/task-panel.js");
+    const agents = [
+      { status: "done", label: "gather" },
+      { status: "error", label: "verify_claims", error: "provider 500 after 3 retries" },
+      { status: "error", label: "cross_check", error: "timeout" },
+    ];
+    const manager = {
+      listRuns: () => [{ runId: "a", workflowName: "audit", status: "running", agents, logs: [] }],
+      getRun: (id: string) => (id === "a" ? { snapshot: { agents } } : undefined),
+    };
+    const lines = renderPanel(manager as never, theme as never);
+    const failLine = lines.find((l) => l.includes("failed")) ?? "";
+    assert.match(failLine, /✗ 2 failed/);
+    assert.ok(failLine.includes("verify_claims"), `names the first failed agent: ${failLine}`);
+    assert.ok(failLine.includes("provider 500"), `carries the short error: ${failLine}`);
+    // A healthy run renders no failed line.
+    const healthy = {
+      listRuns: () => [{ runId: "h", workflowName: "ok", status: "running", agents: [{ status: "done" }], logs: [] }],
+      getRun: () => undefined,
+    };
+    assert.ok(
+      !renderPanel(healthy as never, theme as never).some((l) => l.includes("failed")),
+      "healthy run must not render a failed line",
+    );
+  });
 });
 
-// ─── token/s rolling-window math ────────────────────────────────────────────────
+// ─── per-agent stall flag ────────────────────────────────────────────────────────
 
-describe("token rate", () => {
-  it("returns 0 with fewer than two samples and after clearing", async () => {
-    const { sampleTokens, tokensPerSecond, clearTokenSamples } = await import("../src/task-panel.js");
-    clearTokenSamples("rate-a");
-    assert.equal(tokensPerSecond("rate-a"), 0);
-    sampleTokens("rate-a", 100, 1000);
-    assert.equal(tokensPerSecond("rate-a"), 0);
-    sampleTokens("rate-a", 1100, 2000);
-    assert.equal(tokensPerSecond("rate-a"), 1000, "1000 tokens over 1s = 1000 tok/s");
-    clearTokenSamples("rate-a");
-    assert.equal(tokensPerSecond("rate-a"), 0, "cleared samples reset the rate");
-  });
-
-  it("computes the rate over the oldest-to-newest window", async () => {
-    const { sampleTokens, tokensPerSecond, clearTokenSamples } = await import("../src/task-panel.js");
-    clearTokenSamples("rate-b");
-    sampleTokens("rate-b", 0, 1000);
-    sampleTokens("rate-b", 1000, 2000);
-    sampleTokens("rate-b", 1500, 3000);
-    // (1500 - 0) tokens over (3000 - 1000) ms = 750 tok/s
-    assert.equal(tokensPerSecond("rate-b"), 750);
-  });
-
-  it("decays to 0 when the total plateaus (stall detection)", async () => {
-    const { sampleTokens, tokensPerSecond, clearTokenSamples } = await import("../src/task-panel.js");
-    clearTokenSamples("rate-c");
-    sampleTokens("rate-c", 0, 0);
-    sampleTokens("rate-c", 1000, 1000);
-    assert.equal(tokensPerSecond("rate-c"), 1000);
-    // A stall: same total sampled > 10s later ages out the growth window → 0 tok/s.
-    sampleTokens("rate-c", 1000, 12000);
-    assert.equal(tokensPerSecond("rate-c"), 0, "stalled agent shows 0 tok/s");
+describe("agentStallFlag", () => {
+  it("flags a running agent quiet ≥90s and stays silent otherwise", async () => {
+    const { agentStallFlag } = await import("../src/task-panel.js");
+    const now = 1_000_000;
+    // Running + last event 2m ago → stalled.
+    assert.match(agentStallFlag({ status: "running", lastEventAt: now - 120_000 }, now), /no activity 2m ago/);
+    // Running but recent (30s) → no flag.
+    assert.equal(agentStallFlag({ status: "running", lastEventAt: now - 30_000 }, now), "");
+    // Not running → never flagged, even if old.
+    assert.equal(agentStallFlag({ status: "done", lastEventAt: now - 600_000 }, now), "");
+    // No event stamp yet → no flag.
+    assert.equal(agentStallFlag({ status: "running" }, now), "");
   });
 });
 
@@ -671,8 +777,7 @@ describe("renderPanelDetailed", () => {
   });
 
   it("keeps the scalar estimate for cost-only agents instead of a zero breakdown (#57 regression)", async () => {
-    const { renderPanelDetailed, clearTokenSamples } = await import("../src/task-panel.js");
-    clearTokenSamples("r3");
+    const { renderPanelDetailed } = await import("../src/task-panel.js");
     const snapshot = {
       name: "wf3",
       phases: ["P"],
@@ -717,8 +822,7 @@ describe("renderPanelDetailed", () => {
   });
 
   it("renders aggregate tokens, cost, phases, and per-agent rows", async () => {
-    const { renderPanelDetailed, clearTokenSamples } = await import("../src/task-panel.js");
-    clearTokenSamples("r1");
+    const { renderPanelDetailed } = await import("../src/task-panel.js");
     // discover_routes 2100 + audit_auth 1800 = 3900 → "3.9K tok" aggregate.
     const lines = renderPanelDetailed(detailedManager(2100) as never, theme as never, undefined, 8, 1000);
     const text = lines.join("\n");
@@ -751,35 +855,55 @@ describe("renderPanelDetailed", () => {
     );
   });
 
-  it("shows a live token/s after two growing samples", async () => {
-    const { renderPanelDetailed, clearTokenSamples } = await import("../src/task-panel.js");
-    clearTokenSamples("r1");
-    // aggregate goes 3900 → 5900 over 1s = 2000 tok/s
-    renderPanelDetailed(detailedManager(2100) as never, theme as never, undefined, 8, 1000);
-    const lines = renderPanelDetailed(detailedManager(4100) as never, theme as never, undefined, 8, 2000);
+  it("shows run elapsed instead of a token rate", async () => {
+    const { renderPanelDetailed } = await import("../src/task-panel.js");
+    // The run started 3m12s before `now`; elapsed replaces the removed tok/s slot.
+    const start = new Date(1000 - 192_000);
+    const mgr = detailedManager(2100);
+    const baseGetRun = mgr.getRun;
+    mgr.getRun = (id: string) => {
+      const run = baseGetRun(id) as { snapshot: unknown; status: string } | undefined;
+      return run ? { ...run, startedAt: start } : undefined;
+    };
+    const lines = renderPanelDetailed(mgr as never, theme as never, undefined, 8, 1000);
+    const text = lines.join("\n");
+    assert.ok(/3m12s/.test(text), `expected run elapsed, got:\n${text}`);
+    assert.ok(!/tok\/s/.test(text), "no token rate readout anymore");
+  });
+
+  it("flags a running agent that has gone quiet (no activity)", async () => {
+    const { renderPanelDetailed } = await import("../src/task-panel.js");
+    const now = 1_000_000;
+    const snapshot = {
+      name: "wf",
+      phases: ["P"],
+      currentPhase: "P",
+      logs: [],
+      agents: [
+        // Running but last event 2m ago → stalled.
+        { id: 1, label: "stuck_agent", status: "running", phase: "P", lastEventAt: now - 120_000 },
+      ],
+      tokenUsage: { total: 0, input: 0, output: 0, cost: 0 },
+    };
+    const manager = {
+      listRuns: () => [{ runId: "rs", workflowName: "wf", status: "running", agents: snapshot.agents }],
+      getRun: (id: string) => (id === "rs" ? { snapshot, status: "running" } : undefined),
+    };
+    const lines = renderPanelDetailed(manager as never, theme as never, undefined, 8, now);
     assert.ok(
-      lines.some((l) => /2000 tok\/s/.test(l)),
-      `expected a tok/s readout, got:\n${lines.join("\n")}`,
+      lines.some((l) => l.includes("stuck_agent") && /no activity 2m ago/.test(l)),
+      `expected a per-agent stall flag, got:\n${lines.join("\n")}`,
     );
   });
 
   it("caps agents per phase and reports the overflow", async () => {
-    const { renderPanelDetailed, clearTokenSamples } = await import("../src/task-panel.js");
-    clearTokenSamples("r1");
+    const { renderPanelDetailed } = await import("../src/task-panel.js");
     const lines = renderPanelDetailed(detailedManager(12400) as never, theme as never, undefined, 2, 1000);
     const text = lines.join("\n");
     // Scan has 3 agents, cap 2 → most recent 2 shown + "… 1 earlier agents"
     assert.ok(/… 1 earlier agents/.test(text), "overflow line present");
     assert.ok(!/discover_routes/.test(text), "oldest agent hidden when capped");
     assert.ok(/audit_auth/.test(text) && /scan_middleware/.test(text), "most recent agents shown");
-  });
-
-  it("suppresses tok/s for paused runs", async () => {
-    const { renderPanelDetailed, clearTokenSamples } = await import("../src/task-panel.js");
-    clearTokenSamples("r1");
-    renderPanelDetailed(detailedManager(1000, "paused") as never, theme as never, undefined, 8, 1000);
-    const lines = renderPanelDetailed(detailedManager(3000, "paused") as never, theme as never, undefined, 8, 2000);
-    assert.ok(!lines.some((l) => /tok\/s/.test(l)), "paused run shows no token rate");
   });
 });
 
@@ -905,5 +1029,186 @@ describe("deliverText", () => {
     assert.ok(!/truncated/.test(under), "a 396-char dump is under the default 400");
     const over = deliverText(makeResult({ note: "y".repeat(390) }) as never);
     assert.ok(/…\(truncated/.test(over), "a 406-char dump exceeds the default 400");
+  });
+});
+
+// ─── failureText ────────────────────────────────────────────────────────────────
+
+describe("failureText", () => {
+  it("names the error code and the resume command for recoverable failures", async () => {
+    const { failureText } = await import("../src/task-panel.js");
+    const text = failureText("run-1", { message: "timed out", code: "AGENT_TIMEOUT", recoverable: true });
+    assert.ok(text.includes("[AGENT_TIMEOUT]"), "machine code shown");
+    assert.ok(text.includes("timed out"), "message shown");
+    assert.ok(text.includes("/workflows resume run-1"), "resume is the named next action");
+  });
+
+  it("treats a missing recoverable flag as resumable", async () => {
+    const { failureText } = await import("../src/task-panel.js");
+    const text = failureText("run-2", { message: "boom" });
+    assert.ok(text.includes("/workflows resume run-2"));
+  });
+
+  it("says a non-recoverable failure won't resolve by re-running", async () => {
+    const { failureText } = await import("../src/task-panel.js");
+    const text = failureText("run-3", {
+      message: "bad script",
+      code: "SCRIPT_VALIDATION_ERROR",
+      recoverable: false,
+    });
+    assert.ok(text.includes("[SCRIPT_VALIDATION_ERROR]"));
+    assert.ok(text.includes("won't resolve by re-running"));
+    assert.ok(!text.includes("/workflows resume"), "no resume hint for a non-resumable failure");
+  });
+
+  it("omits the bracket for UNKNOWN codes", async () => {
+    const { failureText } = await import("../src/task-panel.js");
+    const text = failureText("run-4", { message: "mystery", code: "UNKNOWN" });
+    assert.ok(!text.includes("[UNKNOWN]"), "no meaningless bracket");
+    assert.ok(text.includes("mystery"));
+  });
+});
+
+// ─── fmtAgo ─────────────────────────────────────────────────────────────────────
+
+describe("fmtAgo", () => {
+  it("buckets sub-minute, minute, and hour ages", async () => {
+    const { fmtAgo } = await import("../src/task-panel.js");
+    const t0 = 1_000_000;
+    assert.equal(fmtAgo(t0, t0), "just now");
+    assert.equal(fmtAgo(t0, t0 - 12_000), "12s ago");
+    assert.equal(fmtAgo(t0, t0 - 3 * 60_000), "3m ago");
+    assert.equal(fmtAgo(t0, t0 - 65 * 60_000), "1h5m ago");
+  });
+});
+
+// ─── deliverText: confidence signals ────────────────────────────────────────────
+
+describe("deliverText confidence signals", () => {
+  function makeRunWith(resultExtra: Record<string, unknown>) {
+    return {
+      snapshot: { name: "wf", agentCount: 2 },
+      result: { agentCount: 2, result: { verdict: "done" }, ...resultExtra },
+    };
+  }
+
+  it("renders the cross-checks line when quality helpers ran", async () => {
+    const { deliverText } = await import("../src/task-panel.js");
+    const text = deliverText(
+      makeRunWith({
+        quality: {
+          verify: { checks: 7, confirmed: 5, votes: 14 },
+          judge: { panels: 2, candidates: 6, bestScore: 0.83 },
+          completeness: { runs: 1, incomplete: 1, gaps: 3 },
+        },
+      }) as never,
+    );
+    assert.ok(text.includes("Cross-checks: verify 5/7 confirmed (14 votes)"), `verify segment: ${text}`);
+    assert.ok(text.includes("judge best 0.83 (2 panels)"), `judge segment: ${text}`);
+    assert.ok(text.includes("completeness: 3 gaps flagged"), `completeness segment: ${text}`);
+  });
+
+  it("omits the cross-checks line when no quality helper ran", async () => {
+    const { deliverText } = await import("../src/task-panel.js");
+    const text = deliverText(
+      makeRunWith({
+        quality: {
+          verify: { checks: 0, confirmed: 0, votes: 0 },
+          judge: { panels: 0, candidates: 0, bestScore: 0 },
+          completeness: { runs: 0, incomplete: 0, gaps: 0 },
+        },
+      }) as never,
+    );
+    assert.ok(!text.includes("Cross-checks:"), "nothing to report");
+  });
+
+  it("warns about checkpoints that auto-approved in the background", async () => {
+    const { deliverText } = await import("../src/task-panel.js");
+    const text = deliverText(
+      makeRunWith({
+        autoCheckpoints: [
+          { prompt: "Delete the old table?", reply: true },
+          { prompt: "Ship it?", reply: true },
+        ],
+      }) as never,
+    );
+    assert.ok(text.includes("⚠ 2 checkpoints auto-approved"), `warning line: ${text}`);
+    assert.ok(text.includes('"Delete the old table?"'), "names the prompts");
+  });
+
+  it("stays silent when every checkpoint was human-approved", async () => {
+    const { deliverText } = await import("../src/task-panel.js");
+    const text = deliverText(makeRunWith({}) as never);
+    assert.ok(!text.includes("auto-approved"), "no warning without auto checkpoints");
+  });
+});
+
+// ─── renderPanel compact meta: tokens / cost / liveness / auto-checkpoints ──────
+
+describe("renderPanel compact meta", () => {
+  const theme = { fg: (_c: string, t: string) => t, bold: (t: string) => t };
+
+  it("shows tokens, cost, liveness, and the auto-checkpoint marker", async () => {
+    const { renderPanel, noteActivity, clearActivity } = await import("../src/task-panel.js");
+    const now = 1_000_000;
+    clearActivity("ra");
+    noteActivity("ra", now - 30_000);
+    const agentRow = {
+      status: "done",
+      tokens: 2100,
+      tokenUsage: { input: 1500, output: 600, total: 2100, cacheRead: 0, cacheWrite: 0, cost: 0.01 },
+    };
+    const manager = {
+      listRuns: () => [
+        {
+          runId: "ra",
+          workflowName: "audit",
+          status: "running",
+          updatedAt: new Date(now - 90_000).toISOString(),
+          agents: [agentRow, { status: "running" }],
+          logs: [],
+        },
+      ],
+      getRun: (id: string) =>
+        id === "ra"
+          ? {
+              snapshot: {
+                currentPhase: "Scan",
+                autoCheckpointCount: 2,
+                agents: [agentRow, { status: "running" }],
+              },
+            }
+          : undefined,
+    };
+    const lines = renderPanel(manager as never, theme as never, undefined, now);
+    clearActivity("ra");
+    const row = lines.find((l) => l.includes("audit")) ?? "";
+    assert.ok(row.includes("1/2 agents"), row);
+    assert.ok(row.includes("Scan"), row);
+    assert.ok(/2\.1K tok/.test(row), row);
+    assert.ok(row.includes("$0.01"), row);
+    assert.ok(row.includes("⚠2 auto-checkpoints"), row);
+    assert.ok(row.includes("updated 30s ago"), `event-driven liveness beats the stale updatedAt: ${row}`);
+  });
+
+  it("falls back to the persisted updatedAt when no live event was seen", async () => {
+    const { renderPanel, clearActivity } = await import("../src/task-panel.js");
+    const now = 1_000_000;
+    clearActivity("rb");
+    const manager = {
+      listRuns: () => [
+        {
+          runId: "rb",
+          workflowName: "stale",
+          status: "running",
+          updatedAt: new Date(now - 45_000).toISOString(),
+          agents: [{ status: "running" }],
+          logs: [],
+        },
+      ],
+      getRun: () => undefined,
+    };
+    const lines = renderPanel(manager as never, theme as never, undefined, now);
+    assert.ok((lines.find((l) => l.includes("stale")) ?? "").includes("updated 45s ago"), lines.join("\n"));
   });
 });

@@ -31,6 +31,8 @@ export interface WorkflowSandboxRunOptions {
   /** Primarily for tests and packaged-host overrides. */
   childModulePath?: string;
   maximumOldSpaceMb?: number;
+  /** Called with the child's quality tally (verify/judgePanel/completenessCheck) on success. */
+  onQuality?: (quality: unknown) => void;
   /** Expose only Claude-compatible globals; Pi additions live under globalThis.pi. */
   compatibilityMode?: boolean;
 }
@@ -55,6 +57,7 @@ interface SandboxResult {
   nonce: string;
   ok: boolean;
   value?: unknown;
+  quality?: unknown;
   error?: SerializedError;
 }
 
@@ -126,8 +129,10 @@ export function runWorkflowSandbox<T = unknown>(options: WorkflowSandboxRunOptio
     child.on("message", (message: SandboxRequest | SandboxNotification | SandboxResult) => {
       if (!message || typeof message !== "object" || message.nonce !== nonce) return;
       if (message.type === "result") {
-        if (message.ok) finish(undefined, message.value);
-        else finish(deserializeError(message.error));
+        if (message.ok) {
+          if (message.quality !== undefined) options.onQuality?.(message.quality);
+          finish(undefined, message.value);
+        } else finish(deserializeError(message.error));
         return;
       }
       if (message.type === "notification") {

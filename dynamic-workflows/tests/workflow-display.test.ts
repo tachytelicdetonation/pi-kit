@@ -98,10 +98,12 @@ describe("renderWorkflowText", () => {
     assert.ok(text.includes("Phase2"), "should contain Phase2");
   });
 
-  it("includes agent labels", async () => {
+  it("includes failed agent labels (healthy agents collapse into the phase rollup)", async () => {
     const { createWorkflowSnapshot, renderWorkflowText } = await loadDisplay();
     const snap = createWorkflowSnapshot(fakeMeta());
-    snap.agents = [agent(1, "inventory", "done", "Research")] as never[];
+    // Post-redesign, individual agent rows render only for failures; a failed
+    // agent's label must still surface so the failure is never silent.
+    snap.agents = [agent(1, "inventory", "error", "Research")] as never[];
     const text = renderWorkflowText(snap);
     assert.ok(text.includes("inventory"), "should contain inventory");
   });
@@ -125,6 +127,20 @@ describe("renderWorkflowText", () => {
     snap.agents = [agent(1, "a1", "done", "Research"), agent(2, "a2", "error", "Research")] as never[];
     const text = renderWorkflowLines(recomputeWorkflowSnapshot(snap)).join("\n");
     assert.ok(text.includes("1 errors"), "should show error count");
+  });
+
+  it("surfaces a '✗ N failed' header line naming the first failure when errorCount > 0", async () => {
+    const { createWorkflowSnapshot, renderWorkflowLines, recomputeWorkflowSnapshot } = await loadDisplay();
+    const snap = recomputeWorkflowSnapshot(createWorkflowSnapshot(fakeMeta()));
+    snap.agents = [
+      agent(1, "gather", "done", "Research"),
+      agent(2, "verify-claims", "error", "Verify", { prompt: "check" }),
+    ] as never[];
+    (snap.agents[1] as { error?: string }).error = "provider timeout after 3 retries";
+    const text = renderWorkflowLines(recomputeWorkflowSnapshot(snap)).join("\n");
+    assert.ok(/✗ 1 failed/.test(text), `should render the failed line; got: ${text}`);
+    assert.ok(text.includes("verify-claims"), "names the first failed agent");
+    assert.ok(text.includes("provider timeout"), "carries the short error");
   });
 
   it("shows running count in header", async () => {
@@ -164,36 +180,17 @@ describe("renderWorkflowText", () => {
   it("shows unphased agents when agents have no phase", async () => {
     const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
     const snap = createWorkflowSnapshot(fakeMeta("t", "d", []));
-    snap.agents = [agent(1, "orphan", "done")] as never[];
+    // A failed unphased agent surfaces its row; the Unphased rollup is always shown.
+    snap.agents = [agent(1, "orphan", "error")] as never[];
     const text = renderWorkflowLines(snap).join("\n");
     assert.ok(text.includes("Unphased"), "should show unphased section");
     assert.ok(text.includes("orphan"), "should contain orphan");
   });
 
-  it("shows agent tokens when available", async () => {
-    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
-    const snap = createWorkflowSnapshot(fakeMeta());
-    snap.agents = [agent(1, "heavy-agent", "done", "Research", { tokens: 12345 })] as never[];
-    const text = renderWorkflowLines(snap).join("\n");
-    // toLocaleString() output depends on locale (UK/US uses commas, PL uses NBSP)
-    // Check with a regex matching any thousands separator between 12 and 345
-    assert.ok(/12[ ,.\u00a0]345/.test(text), "should show formatted token count");
-  });
-
-  it("shows a fresh/cache split for an agent with tokenUsage", async () => {
-    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
-    const snap = createWorkflowSnapshot(fakeMeta());
-    snap.agents = [
-      agent(1, "cached-agent", "done", "Research", {
-        tokens: 3_100_000,
-        tokenUsage: { input: 80_000, output: 20_000, total: 3_100_000, cacheRead: 3_000_000, cacheWrite: 0, cost: 0.4 },
-      }),
-    ] as never[];
-    const text = renderWorkflowLines(snap).join("\n");
-    // fresh (input+output = 100,000) reads as "tok"; cacheRead (3,000,000) as "cached" (locale-flexible separators)
-    assert.ok(/100[ ,.\u00a0]000 tok/.test(text), "shows fresh (input+output) as tok");
-    assert.ok(/3[ ,.\u00a0]000[ ,.\u00a0]000 cached/.test(text), "shows cacheRead as cached");
-  });
+  // NOTE: per-agent token cells were removed from the inline transcript (the
+  // redesign collapses healthy agents into the phase rollup and cuts token chrome).
+  // Aggregate token figures are still asserted on the header (below) and the
+  // navigator; per-agent token detail lives in `renderPanelDetailed` / the navigator.
 
   it("tokenFigures uses the breakdown when it carries signal and the estimate otherwise", async () => {
     const { tokenFigures } = await loadDisplay();
@@ -238,18 +235,9 @@ describe("renderWorkflowText", () => {
     assert.ok(!/\b0 tok/.test(text), `must not render a zero breakdown; got: ${text}`);
   });
 
-  it("keeps the scalar estimate for a cost-only agent row (#57 regression)", async () => {
-    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
-    const snap = createWorkflowSnapshot(fakeMeta());
-    snap.agents = [
-      agent(1, "cost-only-agent", "done", "Research", {
-        tokens: 384,
-        tokenUsage: { input: 0, output: 0, total: 0, cacheRead: 0, cacheWrite: 0, cost: 0.02 },
-      }),
-    ] as never[];
-    const text = renderWorkflowLines(snap).join("\n");
-    assert.ok(/\[384 tok\]/.test(text), `cost-only agent should show its scalar estimate; got: ${text}`);
-  });
+  // NOTE: the per-agent "[384 tok]" cell was removed from the inline transcript;
+  // the cost-only #57 regression is covered by the header test above and the
+  // `tokenFigures` unit test (the estimate-survives-as-fresh rule).
 
   it("suppresses the header token segment for an all-zero usage aggregate (#57 regression)", async () => {
     const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
@@ -270,18 +258,21 @@ describe("renderWorkflowText", () => {
   it("truncates long agent labels", async () => {
     const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
     const snap = createWorkflowSnapshot(fakeMeta());
-    snap.agents = [agent(1, "x".repeat(100), "done", "Research")] as never[];
+    // Individual rows render only for failures; use an error agent to exercise the
+    // label truncation on the surviving per-agent surface.
+    snap.agents = [agent(1, "x".repeat(100), "error", "Research")] as never[];
     const text = renderWorkflowLines(snap).join("\n");
     assert.ok(text.includes("…"), "should truncate with ellipsis");
     assert.ok(text.length < 200, "should not include the full 100-char label");
   });
 
-  it("shows 'earlier agents' when more agents than maxAgents", async () => {
+  it("caps error rows at maxAgents and reports the overflow", async () => {
     const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
     const snap = createWorkflowSnapshot(fakeMeta("t", "d", ["Phase"]));
-    snap.agents = Array.from({ length: 20 }, (_, i) => agent(i + 1, `agent-${i + 1}`, "done", "Phase")) as never[];
+    // Only failures get individual rows now, so maxAgents caps the error rows.
+    snap.agents = Array.from({ length: 20 }, (_, i) => agent(i + 1, `agent-${i + 1}`, "error", "Phase")) as never[];
     const text = renderWorkflowLines(snap, { maxAgents: 5 }).join("\n");
-    assert.ok(text.includes("earlier agents"), "should mention earlier agents");
+    assert.ok(text.includes("earlier failures"), "should mention earlier failures");
     assert.ok(text.includes("agent-20"), "should show last agent");
     // Use word boundary to avoid matching "agent-1" inside "agent-11", "agent-12", etc.
     assert.ok(!/\bagent-1\b/.test(text), "first agents should be clipped");
@@ -873,7 +864,8 @@ describe("TUI rendering has no markdown syntax", () => {
   it("renderWorkflowLines uses [id] instead of #id prefix", async () => {
     const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
     const snap = createWorkflowSnapshot(fakeMeta("t", "d", ["Phase"]));
-    snap.agents = [agent(1, "agent-1", "done", "Phase")] as never[];
+    // Individual rows render only for failures; use an error agent to exercise [id].
+    snap.agents = [agent(1, "agent-1", "error", "Phase")] as never[];
     const text = renderWorkflowLines(snap).join("\n");
     // Should use bracket notation, not hash notation
     assert.ok(text.includes("[1]"), "should use [id] instead of #id");
@@ -932,5 +924,27 @@ describe("TUI rendering has no markdown syntax", () => {
     assert.doesNotThrow(() => {
       tool.renderResult(resultWithMarkdown as never, { isPartial: false }, theme as never);
     });
+  });
+});
+
+// ─── aggregateAgentUsage ─────────────────────────────────────────────────────
+
+describe("aggregateAgentUsage", () => {
+  it("sums fresh/cacheRead tokens and real per-agent cost", async () => {
+    const { aggregateAgentUsage } = await import("../src/display.js");
+    const total = aggregateAgentUsage([
+      {
+        tokens: 2100,
+        tokenUsage: { input: 1500, output: 600, total: 2100, cacheRead: 0, cacheWrite: 0, cost: 0.01 },
+      },
+      {
+        tokens: 3000,
+        tokenUsage: { input: 100, output: 100, total: 3000, cacheRead: 2800, cacheWrite: 0, cost: 0.02 },
+      },
+      { tokens: 500 }, // estimate-only: no provider breakdown, no cost
+    ]);
+    assert.equal(total.fresh, 2800, "2100 fresh + 200 post-cache + 500 estimate");
+    assert.equal(total.cacheRead, 2800);
+    assert.ok(Math.abs(total.cost - 0.03) < 1e-9, `cost sums per-agent figures: ${total.cost}`);
   });
 });

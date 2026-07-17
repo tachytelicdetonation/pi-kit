@@ -303,8 +303,10 @@ describe("display", () => {
     const { createWorkflowSnapshot, renderWorkflowLines } = await load();
     const meta: WorkflowMeta = { name: "wf", description: "d", phases: [{ title: "Research" }] };
     const snap = createWorkflowSnapshot(meta);
+    // Individual agent rows render only for failures now; use an error agent so the
+    // label surfaces (healthy agents collapse into the phase rollup).
     snap.agents = [
-      { id: 1, label: "agent-1", prompt: "x", status: "done", phase: "Research" },
+      { id: 1, label: "agent-1", prompt: "x", status: "error", phase: "Research" },
     ] as WorkflowAgentSnapshot[];
     const lines = renderWorkflowLines(snap);
     const text = lines.join("\n");
@@ -330,8 +332,10 @@ describe("display", () => {
     const { createWorkflowSnapshot, renderWorkflowLines } = await load();
     const meta: WorkflowMeta = { name: "wf", description: "d" };
     const snap = createWorkflowSnapshot(meta);
+    // Result previews now attach to failure rows (the surface that still gets an
+    // individual row); a failed agent keeps showResultPreviews working.
     snap.agents = [
-      { id: 1, label: "a1", prompt: "x", status: "done", resultPreview: "found 3 issues" },
+      { id: 1, label: "a1", prompt: "x", status: "error", resultPreview: "found 3 issues" },
     ] as WorkflowAgentSnapshot[];
     const lines = renderWorkflowLines(snap, { showResultPreviews: true });
     const text = lines.join("\n");

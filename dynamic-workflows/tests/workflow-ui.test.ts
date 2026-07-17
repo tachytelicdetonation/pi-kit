@@ -444,9 +444,46 @@ test("renderNavigator shows agents view", () => {
   const lines = renderNavigator(state, model, 80);
   const text = lines.join("\n");
   assert.match(text, /Scan · 2 agents/);
-  assert.match(text, /› ● scan a/);
+  assert.match(text, /› ✓ scan a/);
   assert.match(text, /scan b/);
   assert.match(text, /enter open/);
+});
+
+test("renderNavigator shows a per-status glyph (not color alone) in agent rows", () => {
+  const snapshot: WorkflowSnapshot = {
+    name: "wf",
+    phases: ["P"],
+    currentPhase: "P",
+    logs: [],
+    agents: [
+      { id: 1, label: "queued-agent", phase: "P", prompt: "q", status: "queued" },
+      { id: 2, label: "running-agent", phase: "P", prompt: "r", status: "running" },
+      { id: 3, label: "done-agent", phase: "P", prompt: "d", status: "done" },
+      { id: 4, label: "error-agent", phase: "P", prompt: "e", status: "error" },
+      { id: 5, label: "skipped-agent", phase: "P", prompt: "s", status: "skipped" },
+    ],
+    agentCount: 5,
+    runningCount: 1,
+    doneCount: 1,
+    errorCount: 1,
+  };
+  const model = new NavigatorModel({
+    listRuns: () =>
+      [
+        { runId: "r-glyphs", workflowName: "wf", status: "running", phases: ["P"], agents: snapshot.agents, logs: [] },
+      ] as unknown as PersistedRunState[],
+    getRun: (id: string) =>
+      id === "r-glyphs" ? ({ runId: "r-glyphs", status: "running", snapshot } as unknown as ManagedRun) : undefined,
+  });
+  const state = new NavigatorState();
+  state.drill(model);
+  state.drill(model);
+  const text = renderNavigator(state, model, 80).join("\n");
+  assert.match(text, /○ queued-agent/);
+  assert.match(text, /● running-agent/);
+  assert.match(text, /✓ done-agent/);
+  assert.match(text, /✗ error-agent/);
+  assert.match(text, /- skipped-agent/);
 });
 
 test("renderNavigator shows agent detail view", () => {

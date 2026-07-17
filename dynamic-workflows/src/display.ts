@@ -23,6 +23,10 @@ export interface WorkflowAgentSnapshot {
   tokenUsage?: AgentUsage;
   /** The model this agent ran on (provider/id), when known. */
   model?: string;
+  /** Epoch ms when this agent first transitioned to "running" (liveness/elapsed). */
+  startedAt?: number;
+  /** Epoch ms of the last observed event for this agent (per-agent stall signal). */
+  lastEventAt?: number;
 }
 
 export interface WorkflowSnapshot {
@@ -47,6 +51,8 @@ export interface WorkflowSnapshot {
     cacheWrite?: number;
   };
   runId?: string;
+  /** checkpoint() gates auto-approved headlessly so far (no human was asked). */
+  autoCheckpointCount?: number;
 }
 
 export interface WorkflowDisplay {
@@ -87,19 +93,22 @@ export function tokenFigures(
   return { fresh: Math.max(reported, estimate - cacheRead), cacheRead };
 }
 
-/** Sum a set of agents into fresh vs cacheRead totals, via {@link tokenFigures}. */
+/** Sum a set of agents into fresh vs cacheRead token totals plus real cost, via {@link tokenFigures}. */
 export function aggregateAgentUsage(agents: ReadonlyArray<Pick<WorkflowAgentSnapshot, "tokens" | "tokenUsage">>): {
   fresh: number;
   cacheRead: number;
+  cost: number;
 } {
   let fresh = 0;
   let cacheRead = 0;
+  let cost = 0;
   for (const a of agents) {
     const f = tokenFigures(a.tokenUsage, a.tokens);
     fresh += f.fresh;
     cacheRead += f.cacheRead;
+    cost += a.tokenUsage?.cost ?? 0;
   }
-  return { fresh, cacheRead };
+  return { fresh, cacheRead, cost };
 }
 
 /**
@@ -136,6 +145,25 @@ export function fmtCost(cost: number): string {
 
 /** Full (non-compact) number style for print/text surfaces: locale-grouped digits. */
 export const fmtFull = (n: number): string => n.toLocaleString();
+
+/** Wall-clock elapsed as a compact stopwatch: "42s", "3m12s", "1h05m". */
+export function fmtDuration(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h${String(m % 60).padStart(2, "0")}m`;
+}
+
+/** Earliest per-agent start time in a snapshot, or undefined when none stamped. */
+function earliestAgentStart(agents: ReadonlyArray<Pick<WorkflowAgentSnapshot, "startedAt">>): number | undefined {
+  let min: number | undefined;
+  for (const a of agents) {
+    if (typeof a.startedAt === "number" && (min === undefined || a.startedAt < min)) min = a.startedAt;
+  }
+  return min;
+}
 
 export function createWorkflowSnapshot(meta: WorkflowMeta): WorkflowSnapshot {
   return {
@@ -244,16 +272,44 @@ export interface ThemeLike {
 /** Identity passthrough for contexts where no theme is available (tool text output). */
 const NO_THEME: ThemeLike = { fg: (_c, t) => t, bold: (t) => t };
 
-/** The bracketed per-agent token cell (" [89 tok · 3,000 cached]"), or "" when nothing is known yet. */
-function agentTokenCell(agent: WorkflowAgentSnapshot, theme: ThemeLike): string {
-  const segment = fmtTokenSegment(tokenFigures(agent.tokenUsage, agent.tokens), fmtFull);
-  return segment ? theme.fg("dim", ` [${segment}]`) : "";
+/** The first failed agent's label + short error, or "" when nothing failed yet. */
+function firstFailureText(agents: ReadonlyArray<WorkflowAgentSnapshot>): string {
+  const failed = agents.find((a) => a.status === "error");
+  if (!failed) return "";
+  const why = shorten(failed.error ?? failed.errorCode ?? "failed", 60);
+  return `"${shorten(failed.label, 40)}": ${why}`;
+}
+
+/**
+ * One collapsed error row per failed agent (the DEFAULT roster is the per-phase
+ * rollup — only failures get an individual line so they are never silent).
+ * Honors `maxAgents` (caps the error rows) and `showResultPreviews`.
+ */
+function renderErrorRows(
+  agents: ReadonlyArray<WorkflowAgentSnapshot>,
+  maxAgents: number,
+  showResultPreviews: boolean,
+  theme: ThemeLike,
+  lines: string[],
+): void {
+  const failed = agents.filter((a) => a.status === "error");
+  const visible = failed.slice(-maxAgents);
+  for (const agent of visible) {
+    const why = agent.error ? ` — ${shorten(agent.error, 60)}` : "";
+    const result = showResultPreviews && agent.resultPreview ? ` — ${agent.resultPreview}` : "";
+    lines.push(
+      theme.fg("error", `    [${agent.id}] ${statusIcon(agent.status)} ${shorten(agent.label, 48)}${why}${result}`),
+    );
+  }
+  if (failed.length > visible.length)
+    lines.push(theme.fg("dim", `    … ${failed.length - visible.length} earlier failures`));
 }
 
 export function renderWorkflowLines(
   snapshot: WorkflowSnapshot,
   options: WorkflowDisplayOptions = {},
   theme: ThemeLike = NO_THEME,
+  now: number = Date.now(),
 ): string[] {
   const maxAgents = options.maxAgents ?? 8;
   const showResultPreviews = options.showResultPreviews ?? false;
@@ -268,9 +324,18 @@ export function renderWorkflowLines(
   const costInfo = usage?.cost ? ` · ${fmtCost(usage.cost)}` : "";
   const segment = fmtTokenSegment(tokenFigures(usage), fmtFull);
   const tokenInfo = `${segment ? ` · ${segment}` : ""}${costInfo}`;
+  // Wall-clock elapsed, derived from the earliest agent start (the snapshot has no
+  // run-start stamp of its own). Omitted until at least one agent has started.
+  const start = earliestAgentStart(snapshot.agents);
+  const elapsedInfo = start !== undefined ? ` · ${fmtDuration(now - start)}` : "";
   const lines = [
-    `${theme.bold(`◆ Workflow: ${snapshot.name}`)} (${snapshot.doneCount}/${snapshot.agentCount} done${state}${tokenInfo})`,
+    `${theme.bold(`◆ Workflow: ${snapshot.name}`)} (${snapshot.doneCount}/${snapshot.agentCount} done${state}${elapsedInfo}${tokenInfo})`,
   ];
+
+  // Failures must never be silent: name the first one in red right under the header.
+  if (snapshot.errorCount > 0) {
+    lines.push(theme.fg("error", `  ✗ ${snapshot.errorCount} failed — ${firstFailureText(snapshot.agents)}`));
+  }
 
   const phaseNames = snapshot.phases.length
     ? snapshot.phases
@@ -293,28 +358,24 @@ export function renderWorkflowLines(
           ` ${done}/${agents.length}${running ? ` · ${running} running` : ""}${errors ? ` · ${errors} errors` : ""}${skipped ? ` · ${skipped} skipped` : ""}`,
         ),
     );
-
-    const visibleAgents = agents.slice(-maxAgents);
-    for (const agent of visibleAgents) {
-      const order = `[${agent.id}]`;
-      const result = showResultPreviews && agent.resultPreview ? ` — ${agent.resultPreview}` : "";
-      lines.push(
-        `    ${order} ${statusIcon(agent.status)} ${shorten(agent.label, 48)}${agentTokenCell(agent, theme)}${result}`,
-      );
-    }
-    if (agents.length > visibleAgents.length)
-      lines.push(theme.fg("dim", `    … ${agents.length - visibleAgents.length} earlier agents`));
+    // Healthy agents collapse into the rollup above; only failures get a row.
+    renderErrorRows(agents, maxAgents, showResultPreviews, theme, lines);
   }
 
   const unphased = snapshot.agents.filter((agent) => !rendered.has(agent));
   if (unphased.length) {
-    lines.push(theme.fg("accent", "  Unphased"));
-    for (const agent of unphased.slice(-maxAgents)) {
-      const result = showResultPreviews && agent.resultPreview ? ` — ${agent.resultPreview}` : "";
-      lines.push(
-        `    [${agent.id}] ${statusIcon(agent.status)} ${shorten(agent.label, 48)}${agentTokenCell(agent, theme)}${result}`,
-      );
-    }
+    const done = unphased.filter((a) => a.status === "done").length;
+    const running = unphased.filter((a) => a.status === "running").length;
+    const errors = unphased.filter((a) => a.status === "error").length;
+    const skipped = unphased.filter((a) => a.status === "skipped").length;
+    lines.push(
+      theme.fg("accent", "  Unphased") +
+        theme.fg(
+          "dim",
+          ` ${done}/${unphased.length}${running ? ` · ${running} running` : ""}${errors ? ` · ${errors} errors` : ""}${skipped ? ` · ${skipped} skipped` : ""}`,
+        ),
+    );
+    renderErrorRows(unphased, maxAgents, showResultPreviews, theme, lines);
   }
 
   return lines;

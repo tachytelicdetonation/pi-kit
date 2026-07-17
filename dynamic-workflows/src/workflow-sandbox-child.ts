@@ -138,6 +138,15 @@ async function execute(init: SandboxInit): Promise<void> {
     remaining: () => (init.budgetTotal == null ? Infinity : Math.max(0, init.budgetTotal - spent)),
   });
 
+  // Run-global confidence signals, tallied here and shipped with the result so the
+  // host can show whether the answer was cross-checked. Deterministic: on resume the
+  // body re-executes over journaled agent results and re-tallies identically.
+  const quality = {
+    verify: { checks: 0, confirmed: 0, votes: 0 },
+    judge: { panels: 0, candidates: 0, bestScore: 0 },
+    completeness: { runs: 0, incomplete: 0, gaps: 0 },
+  };
+
   const verify = async (
     item: unknown,
     options: { reviewers?: number; threshold?: number; lens?: string | string[] } = {},
@@ -164,7 +173,11 @@ async function execute(init: SandboxInit): Promise<void> {
       )
     ).filter(Boolean) as Array<{ real?: boolean; reason?: string }>;
     const realCount = votes.filter((vote) => vote.real).length;
-    return { real: votes.length > 0 && realCount / votes.length >= threshold, realCount, total: votes.length, votes };
+    const real = votes.length > 0 && realCount / votes.length >= threshold;
+    quality.verify.checks++;
+    quality.verify.votes += votes.length;
+    if (real) quality.verify.confirmed++;
+    return { real, realCount, total: votes.length, votes };
   };
 
   const judgePanel = async (attempts: unknown[], options: { judges?: number; rubric?: string } = {}) => {
@@ -206,6 +219,9 @@ async function execute(init: SandboxInit): Promise<void> {
       if (candidate.score > best.score || (candidate.score === best.score && candidate.index < best.index))
         best = candidate;
     }
+    quality.judge.panels++;
+    quality.judge.candidates += scored.length;
+    if (best && typeof best.score === "number") quality.judge.bestScore = Math.max(quality.judge.bestScore, best.score);
     return best;
   };
 
@@ -243,8 +259,8 @@ async function execute(init: SandboxInit): Promise<void> {
     }
     return all;
   };
-  const completenessCheck = (taskArgs: unknown, results: unknown) =>
-    agent(
+  const completenessCheck = async (taskArgs: unknown, results: unknown) => {
+    const result = (await agent(
       `Given the task and the results gathered so far, list what is still MISSING (modalities not covered, claims unverified, gaps). Be specific and concise.\n\nTask:\n${JSON.stringify(taskArgs)}\n\nResults so far:\n${JSON.stringify(results).slice(0, 4000)}`,
       {
         label: "completeness critic",
@@ -254,7 +270,14 @@ async function execute(init: SandboxInit): Promise<void> {
           required: ["complete"],
         },
       },
-    );
+    )) as { complete?: boolean; missing?: unknown[] } | null;
+    quality.completeness.runs++;
+    if (result && result.complete === false) {
+      quality.completeness.incomplete++;
+      quality.completeness.gaps += Array.isArray(result.missing) ? result.missing.length : 0;
+    }
+    return result;
+  };
   const retry = async (
     thunk: (attempt: number) => Promise<unknown> | unknown,
     options: { attempts?: number; until?: (result: unknown) => boolean } = {},
@@ -333,7 +356,7 @@ async function execute(init: SandboxInit): Promise<void> {
   try {
     const wrapped = `${DETERMINISM_PRELUDE}\n(async () => {\n${init.body}\n})()`;
     const result = await new vm.Script(wrapped, { filename: init.filename }).runInContext(context);
-    process.send?.({ type: "result", nonce: init.nonce, ok: true, value: result });
+    process.send?.({ type: "result", nonce: init.nonce, ok: true, value: result, quality });
   } catch (error) {
     process.send?.({ type: "result", nonce: init.nonce, ok: false, error: serializeError(error) });
   } finally {

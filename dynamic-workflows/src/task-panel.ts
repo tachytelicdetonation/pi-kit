@@ -12,6 +12,7 @@ import { type Component, type TUI, truncateToWidth, visibleWidth } from "@earend
 import {
   aggregateAgentUsage,
   fmtCost,
+  fmtDuration,
   fmtTokenSegment,
   shorten,
   statusIcon,
@@ -19,14 +20,15 @@ import {
   type WorkflowAgentSnapshot,
   type WorkflowSnapshot,
 } from "./display.js";
+import { WorkflowErrorCode } from "./errors.js";
+import type { QualitySummary } from "./workflow.js";
 import type { ManagedRun, WorkflowManager } from "./workflow-manager.js";
 import type { WorkflowStorage } from "./workflow-saved.js";
 import type { WorkflowSettings } from "./workflow-settings.js";
 import { shortModel } from "./workflow-ui.js";
 
-// `tokenUsage` is included so the detailed panel's live token/s counter refreshes
-// as tokens accrue (not only on agent start/end). It is harmless in compact mode —
-// it redraws identical content.
+// `tokenUsage` is included so the panel repaints as tokens accrue (not only on
+// agent start/end). It is harmless in compact mode — it redraws identical content.
 const RUN_EVENTS = [
   "agentStart",
   "agentEnd",
@@ -39,7 +41,7 @@ const RUN_EVENTS = [
   "paused",
   "resumed",
 ];
-/** Events after which a run is gone and its token-rate samples can be dropped. */
+/** Events after which a run is gone and its liveness activity can be dropped. */
 const RUN_END_EVENTS = ["complete", "error", "stopped"] as const;
 
 export interface TaskPanelOptions {
@@ -97,23 +99,91 @@ function fitLine(line: string, width?: number): string {
   return truncateToWidth(line, maxWidth);
 }
 
+/** One-line aggregate of the quality-stdlib outcomes behind a result, when any ran. */
+function crossChecksText(quality?: QualitySummary): string {
+  if (!quality) return "";
+  const segments: string[] = [];
+  if (quality.verify.checks > 0) {
+    segments.push(
+      `verify ${quality.verify.confirmed}/${quality.verify.checks} confirmed (${quality.verify.votes} votes)`,
+    );
+  }
+  if (quality.judge.panels > 0) {
+    segments.push(
+      `judge best ${quality.judge.bestScore.toFixed(2)} (${quality.judge.panels} panel${quality.judge.panels > 1 ? "s" : ""})`,
+    );
+  }
+  if (quality.completeness.runs > 0) {
+    segments.push(
+      quality.completeness.gaps > 0
+        ? `completeness: ${quality.completeness.gaps} gap${quality.completeness.gaps > 1 ? "s" : ""} flagged`
+        : "completeness: no gaps",
+    );
+  }
+  return segments.length ? `Cross-checks: ${segments.join(" · ")}` : "";
+}
+
+/** Warning line naming checkpoint gates that auto-approved without a human (background runs). */
+function autoCheckpointsText(auto?: Array<{ prompt: string; reply: unknown }>): string {
+  if (!auto?.length) return "";
+  const shown = auto.slice(0, 3).map((c) => `"${shorten(c.prompt, 40)}"`);
+  const more = auto.length > 3 ? ", …" : "";
+  return (
+    `⚠ ${auto.length} checkpoint${auto.length > 1 ? "s" : ""} auto-approved while running in the background ` +
+    `(no one was asked; defaults were used): ${shown.join(", ")}${more}`
+  );
+}
+
 export function deliverText(run: ManagedRun, opts: { resultPath?: string; maxChars?: number } = {}): string {
   const summary = summarizeResult(run.result?.result, opts.maxChars);
   const tu = run.result?.tokenUsage;
   const cost = tu?.cost ? ` · ${fmtCost(tu.cost)}` : "";
   const segment = fmtTokenSegment(tokenFigures(tu), fmtTokensShort);
   const tokens = `${segment ? ` · ${segment}` : ""}${cost}`;
-  const agents = run.result?.agentCount ?? run.snapshot.agentCount;
+  const agentCount = run.result?.agentCount ?? run.snapshot.agentCount;
+  // Honest outcome counts: a synthesis built on silently-nulled failed agents must
+  // say so. Prefer the snapshot's tallies; fall back to counting the agent statuses.
+  const snapAgents = Array.isArray(run.snapshot.agents) ? run.snapshot.agents : [];
+  const ok = run.snapshot.doneCount ?? snapAgents.filter((a) => a.status === "done").length;
+  const failed = run.snapshot.errorCount ?? snapAgents.filter((a) => a.status === "error").length;
+  const skipped = snapAgents.filter((a) => a.status === "skipped").length;
+  const haveBreakdown =
+    snapAgents.length > 0 || run.snapshot.doneCount !== undefined || run.snapshot.errorCount !== undefined;
+  const agents = haveBreakdown
+    ? `${agentCount} agents: ${ok} ok${failed > 0 ? `, ${failed} failed` : ""}${skipped > 0 ? `, ${skipped} skipped` : ""}`
+    : `${agentCount} agents`;
   const duration = run.result?.durationMs ? ` · ${(run.result.durationMs / 1000).toFixed(1)}s` : "";
-  const lines = [
-    `✓ Background workflow "${run.snapshot.name}" finished (${agents} agents${tokens}${duration}).`,
-    "",
-    summary,
-  ];
+  const lines = [`✓ Background workflow "${run.snapshot.name}" finished (${agents}${tokens}${duration}).`, "", summary];
+  // The confidence signals: what was cross-checked — and what NOBODY checked
+  // (headless checkpoint gates that took their defaults unseen).
+  const crossChecks = crossChecksText(run.result?.quality);
+  if (crossChecks) lines.push("", crossChecks);
+  const autoCheckpoints = autoCheckpointsText(run.result?.autoCheckpoints);
+  if (autoCheckpoints) lines.push("", autoCheckpoints);
   // Always point at the full persisted result so the tail is never lost — even when
   // the summary above is a complete verdict/summary field or an untruncated dump.
   if (opts.resultPath) lines.push("", `↳ Full result: ${opts.resultPath}`);
   return lines.join("\n");
+}
+
+/**
+ * User-facing failure line for a background run. Carries the machine error code
+ * (when meaningful) and always ends in the one next action: resume when the
+ * failure is resumable, fix-and-restart when it is not.
+ */
+export function failureText(runId: string, error?: { message?: string; code?: string; recoverable?: boolean }): string {
+  const msg = error?.message ?? "unknown error";
+  const code = error?.code && error.code !== WorkflowErrorCode.UNKNOWN ? ` [${error.code}]` : "";
+  if (error?.recoverable === false) {
+    return (
+      `✗ Background workflow ${runId} failed:${code} ${msg} ` +
+      "This won't resolve by re-running — fix the cause and start a new run."
+    );
+  }
+  return (
+    `✗ Background workflow ${runId} failed:${code} ${msg} ` +
+    `Completed steps are saved — run /workflows resume ${runId} to continue where it left off.`
+  );
 }
 
 /** Absolute path to a run's persisted result JSON. Undefined if the persistence
@@ -151,7 +221,11 @@ function deliveredMaxChars(opts: { loadSettings?: () => WorkflowSettings }): num
 export function installResultDelivery(
   pi: ExtensionAPI,
   manager: WorkflowManager,
-  opts: { loadSettings?: () => WorkflowSettings } = {},
+  opts: {
+    loadSettings?: () => WorkflowSettings;
+    /** Banner notifications for terminal states and delivery failures. */
+    notify?: (message: string, type?: "info" | "warning" | "error") => void;
+  } = {},
 ): void {
   // Mutable holder on manager so shared across re-calls (e.g. session_start after /reload).
   const m = manager as unknown as { __deliveryInstalled?: boolean; __holder?: { pi: ExtensionAPI } };
@@ -163,6 +237,11 @@ export function installResultDelivery(
   m.__deliveryInstalled = true;
   m.__holder = { pi };
 
+  // Delivery must never throw — but it must also never be silently lost. When
+  // the chat path fails (a stale ctx after /reload is the expected case), fall
+  // back to a notification so the user at least learns a result is waiting.
+  const notifyFallback = () =>
+    opts.notify?.("A background workflow result could not be delivered to the chat — find it in /workflows", "warning");
   const deliver = (content: string) => {
     try {
       const ret = m.__holder?.pi.sendMessage(
@@ -170,11 +249,11 @@ export function installResultDelivery(
         { triggerTurn: true, deliverAs: "followUp" },
       );
       // sendMessage may return a promise; a sync try/catch can't catch its
-      // rejection, so swallow the async path too. A stale ctx after /reload is
-      // the expected failure — the result is still visible via /workflows.
-      void Promise.resolve(ret).catch(() => {});
+      // rejection, so handle the async path too.
+      void Promise.resolve(ret).catch(notifyFallback);
     } catch {
-      // Synchronous failure (e.g. stale ctx) — result still visible via /workflows.
+      // Synchronous failure (e.g. stale ctx).
+      notifyFallback();
     }
   };
 
@@ -184,12 +263,22 @@ export function installResultDelivery(
     // returns its result inline as the tool result, so re-delivering would dup it.
     if (run?.background) {
       deliver(deliverText(run, { resultPath: persistedResultPath(manager, runId), maxChars: deliveredMaxChars(opts) }));
+      opts.notify?.(`Workflow "${run.snapshot.name}" finished — result delivered to the conversation.`, "info");
     }
   });
-  manager.on("error", ({ runId, error }: { runId: string; error?: { message?: string } }) => {
-    if (!manager.getRun(runId)?.background) return;
-    deliver(`✗ Background workflow ${runId} failed: ${error?.message ?? "unknown error"}`);
-  });
+  manager.on(
+    "error",
+    ({ runId, error }: { runId: string; error?: { message?: string; code?: string; recoverable?: boolean } }) => {
+      const run = manager.getRun(runId);
+      if (!run?.background) return;
+      // A manual pause()/stop() also surfaces here as WORKFLOW_ABORTED (executeRun's
+      // catch emits "error" either way) — a user action, not a failure to report.
+      if (run.status === "aborted" || run.status === "paused") return;
+      const text = failureText(runId, error);
+      deliver(text);
+      opts.notify?.(text, "error");
+    },
+  );
   // A provider usage/quota limit checkpoints the run as paused (not failed): tell the
   // user it is resumable once their budget refills, rather than letting it look dead.
   // Manual pause() also emits "paused" but with no reason — guard so only the
@@ -211,25 +300,60 @@ export function installResultDelivery(
       if (!manager.getRun(runId)?.background) return;
       const when = resetHint ? ` (${resetHint})` : "";
       const cause = error?.message ?? "provider usage limit reached";
-      deliver(
+      const text =
         `⏸ Background workflow ${runId} paused: ${cause}${when}. ` +
-          `Completed steps are saved — run /workflows resume ${runId} once your usage limit resets.`,
-      );
+        `Completed steps are saved — run /workflows resume ${runId} once your usage limit resets.`;
+      deliver(text);
+      opts.notify?.(text, "warning");
     },
   );
 }
 
-export function renderPanel(manager: WorkflowManager, theme: Theme, width?: number): string[] {
+export function renderPanel(
+  manager: WorkflowManager,
+  theme: Theme,
+  width?: number,
+  now: number = Date.now(),
+): string[] {
   const all = manager.listRuns();
   const active = all.filter((r) => r.status === "running" || r.status === "paused");
   if (!active.length) return [];
-  const rows = active.map((r) => {
+  const rows = active.flatMap((r) => {
     const live = manager.getRun(r.runId);
     const agents = live?.snapshot.agents ?? r.agents;
     const done = agents.filter((a) => a.status === "done").length;
+    const errorAgents = agents.filter((a) => a.status === "error");
     const icon = r.status === "paused" ? "⏸" : "◆";
-    const phase = live?.snapshot.currentPhase ? ` · ${live.snapshot.currentPhase}` : "";
-    return `  ${icon} ${r.workflowName}  ${done}/${agents.length} agents${phase}`;
+    const usage = aggregateAgentUsage(agents);
+    // Wall-clock elapsed for the run (never durationMs — that's only set at
+    // completion). The persisted startedAt is the source of truth; the live run's
+    // Date is the fallback. Omitted when neither is available (tests/minimal hosts).
+    const startMs = live?.startedAt instanceof Date ? live.startedAt.getTime() : Date.parse(r.startedAt);
+    const elapsed = Number.isFinite(startMs) ? fmtDuration(now - startMs) : "";
+    // Liveness: time since the last observed run event (falling back to the last
+    // persisted update) — the compact answer to "is it stuck?".
+    const lastActivity = activity.get(r.runId) ?? Date.parse(r.updatedAt);
+    const autoCheckpoints = live?.snapshot.autoCheckpointCount ?? 0;
+    const meta = [
+      `${done}/${agents.length} agents`,
+      live?.snapshot.currentPhase || "",
+      elapsed,
+      fmtTokenSegment(usage, fmtTokensShort),
+      usage.cost > 0 ? fmtCost(usage.cost) : "",
+      autoCheckpoints > 0 ? `⚠${autoCheckpoints} auto-checkpoint${autoCheckpoints > 1 ? "s" : ""}` : "",
+      Number.isFinite(lastActivity) ? `updated ${fmtAgo(now, lastActivity)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const row = `  ${icon} ${r.workflowName}  ${theme.fg("dim", meta)}`;
+    // Failures must be visible on the default surface: a run with N failed agents
+    // can no longer render identically to a healthy one.
+    if (errorAgents.length > 0) {
+      const first = errorAgents[0];
+      const why = shorten(first.error ?? first.errorCode ?? "failed", 60);
+      return [row, theme.fg("error", `    ✗ ${errorAgents.length} failed — "${shorten(first.label, 40)}": ${why}`)];
+    }
+    return [row];
   });
   // Finished runs leave this live panel but are kept in the navigator. Tell the
   // user so a completed run doesn't look like it vanished.
@@ -243,42 +367,43 @@ export function renderPanel(manager: WorkflowManager, theme: Theme, width?: numb
   return [theme.bold(`Workflows running (${active.length}):`), ...rows, hint].map((line) => fitLine(line, width));
 }
 
-// ─── Detailed mode: live token rate ────────────────────────────────────────────
+// ─── Liveness: run activity + per-agent stall ──────────────────────────────────
 
-/** Rolling window for the token/s rate. Older samples age out so a stall decays to 0. */
-const RATE_WINDOW_MS = 10_000;
-/** Per-run (timestamp, cumulative total) samples, keyed by the persisted runId so
- *  the rolling rate survives pause→resume. Cleared when a run ends. */
-const tokenSamples = new Map<string, Array<{ ts: number; total: number }>>();
+/** A running agent is flagged stalled after this long with no observed event. */
+const STALL_THRESHOLD_MS = 90_000;
 
-/** Record a token-total sample for `runId` at time `now` (ms). */
-export function sampleTokens(runId: string, total: number, now: number): void {
-  const samples = tokenSamples.get(runId) ?? [];
-  const last = samples[samples.length - 1];
-  // Collapse repeat renders within the same instant (e.g. width recalcs).
-  if (last && last.ts === now && last.total === total) return;
-  samples.push({ ts: now, total });
-  // Drop samples beyond the rolling window, always keeping ≥2 so a rate is computable.
-  while (samples.length > 2 && now - samples[0].ts > RATE_WINDOW_MS) samples.shift();
-  tokenSamples.set(runId, samples);
+/**
+ * Stall flag for a RUNNING agent whose last event is older than the threshold —
+ * e.g. "no activity 2m ago". "" for non-running agents, or when there is no event
+ * stamp yet, or when it is still fresh. `now`/`fmtAgo` keep it human-readable.
+ */
+export function agentStallFlag(agent: Pick<WorkflowAgentSnapshot, "status" | "lastEventAt">, now: number): string {
+  if (agent.status !== "running" || typeof agent.lastEventAt !== "number") return "";
+  if (now - agent.lastEventAt < STALL_THRESHOLD_MS) return "";
+  return `no activity ${fmtAgo(now, agent.lastEventAt)}`;
 }
 
-/** Tokens/second over the rolling window; 0 when too few samples or totals plateau. */
-export function tokensPerSecond(runId: string): number {
-  const samples = tokenSamples.get(runId);
-  if (!samples || samples.length < 2) return 0;
-  const oldest = samples[0];
-  const newest = samples[samples.length - 1];
-  const elapsedMs = newest.ts - oldest.ts;
-  if (elapsedMs <= 0) return 0;
-  const delta = newest.total - oldest.total;
-  if (delta <= 0) return 0;
-  return (delta / elapsedMs) * 1000;
+/** Last observed event time per run — the liveness signal behind "updated Ns ago". */
+const activity = new Map<string, number>();
+
+/** Record run activity (any manager event) at time `now` (ms). */
+export function noteActivity(runId: string, now: number): void {
+  activity.set(runId, now);
 }
 
-/** Forget a run's samples (call when it finishes) so the map can't grow unbounded. */
-export function clearTokenSamples(runId: string): void {
-  tokenSamples.delete(runId);
+/** Forget a run's activity timestamp (call when it finishes) so the map can't grow. */
+export function clearActivity(runId: string): void {
+  activity.delete(runId);
+}
+
+/** Short relative time for panel liveness: "just now", "12s ago", "3m ago", "1h5m ago". */
+export function fmtAgo(now: number, then: number): string {
+  const s = Math.max(0, Math.floor((now - then) / 1000));
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.floor(m / 60)}h${m % 60}m ago`;
 }
 
 /** Compact token count for the space-constrained panel: 980, 12.4K, 1.3M. */
@@ -301,6 +426,7 @@ function renderRunBody(
   agents: WorkflowAgentSnapshot[],
   maxAgents: number,
   theme: Theme,
+  now: number,
 ): string[] {
   const dim = (t: string) => theme.fg("dim", t);
   const lines: string[] = [];
@@ -338,7 +464,11 @@ function renderRunBody(
       const tok = segment ? dim(` ${segment}`) : "";
       const mdl = shortModel(a.model);
       const model = mdl ? dim(` · ${mdl}`) : "";
-      lines.push(`    [${a.id}] ${statusIcon(a.status)} ${shorten(a.label, 40)}${tok}${model}`);
+      // A running agent gone quiet for ≥90s is the real stall signal (tok/s used to
+      // fake this and mislabel a long single agent as stalled).
+      const stall = agentStallFlag(a, now);
+      const stalled = stall ? theme.fg("warning", ` · ${stall}`) : "";
+      lines.push(`    [${a.id}] ${statusIcon(a.status)} ${shorten(a.label, 40)}${tok}${model}${stalled}`);
     }
     if (phaseAgents.length > visible.length) {
       lines.push(dim(`    … ${phaseAgents.length - visible.length} earlier agents`));
@@ -349,8 +479,9 @@ function renderRunBody(
 
 /**
  * Detailed variant of {@link renderPanel}: per-run header with aggregate tokens,
- * cost, and a live token/s rate, followed by per-phase progress and per-agent rows
- * (capped at `maxAgents` per phase). `now` is injected for testability.
+ * cost, and wall-clock elapsed, followed by per-phase progress and per-agent rows
+ * (capped at `maxAgents` per phase). Running agents that have gone quiet get a
+ * per-agent stall flag. `now` is injected for testability.
  */
 export function renderPanelDetailed(
   manager: WorkflowManager,
@@ -374,27 +505,26 @@ export function renderPanelDetailed(
     const usage = snap?.tokenUsage ?? r.tokenUsage;
     // The run-level tokenUsage aggregate is only finalized when the run ends, so
     // it reads 0 for the whole live run; per-agent figures update on each agent
-    // completion, so aggregate those instead. The rate samples the same
-    // fresh+cacheRead sum the header displays, so tok/s tracks the visible
-    // figures. Tokens land at agent-completion granularity, so the rate reflects
-    // completion throughput — it decays to 0 during a single long-running agent
-    // or a stall (which is the intended signal). Paused runs don't accrue
-    // tokens, so their rate is suppressed (a stalled rate would mislead).
+    // completion, so aggregate those instead.
     const runUsage = aggregateAgentUsage(agents);
-    sampleTokens(r.runId, runUsage.fresh + runUsage.cacheRead, now);
-    const rate = r.status === "running" ? tokensPerSecond(r.runId) : 0;
+    // Live cost accrues from per-agent figures at completion granularity; the
+    // finalized run-level cost (known once the run ends) is the fallback.
+    const liveCost = runUsage.cost > 0 ? runUsage.cost : (usage?.cost ?? 0);
+    // Wall-clock elapsed replaces the old tok/s: it never falsely reads a long
+    // single agent as a stall. Persisted startedAt first, live Date as fallback.
+    const startMs = live?.startedAt instanceof Date ? live.startedAt.getTime() : Date.parse(r.startedAt);
+    const elapsed = Number.isFinite(startMs) ? fmtDuration(now - startMs) : "";
     const meta = [
       `${done}/${agents.length} agents`,
       snap?.currentPhase || "",
+      elapsed,
       fmtTokenSegment(runUsage, fmtTokensShort),
-      // (cost is only known once the run finalizes its usage.)
-      usage?.cost ? fmtCost(usage.cost) : "",
-      rate > 0 ? `${Math.round(rate)} tok/s` : "",
+      liveCost > 0 ? fmtCost(liveCost) : "",
     ]
       .filter(Boolean)
       .join(" · ");
     out.push(`  ${icon} ${theme.bold(r.workflowName)}  ${dim(meta)}`);
-    if (snap) out.push(...renderRunBody(snap, agents, maxAgents, theme));
+    if (snap) out.push(...renderRunBody(snap, agents, maxAgents, theme, now));
   }
 
   const finished = all.filter((r) => r.status !== "running" && r.status !== "paused").length;
@@ -442,15 +572,20 @@ export function installTaskPanel(
   ui.setWidget(
     "workflow-tasks",
     (tui: TUI, theme: Theme) => {
-      const onEvent = () => tui.requestRender();
+      const onEvent = ({ runId }: { runId?: string } = {}) => {
+        if (runId) noteActivity(runId, Date.now());
+        tui.requestRender();
+      };
       for (const ev of RUN_EVENTS) manager.on(ev, onEvent);
-      const onRunEnd = ({ runId }: { runId: string }) => clearTokenSamples(runId);
+      const onRunEnd = ({ runId }: { runId: string }) => {
+        clearActivity(runId);
+      };
       for (const ev of RUN_END_EVENTS) manager.on(ev, onRunEnd);
-      // In detailed mode, force a redraw every 2s while a run is active so the
-      // token/s rate keeps updating between sparse token events — and decays to 0
-      // when an agent stalls. Gated + unref'd so it costs nothing when idle.
+      // Force a redraw every 2s while a run is active so the run elapsed, the
+      // per-agent stall flag, and the compact "updated … ago" liveness label keep
+      // ticking between manager events. Unref'd so it's free when idle.
       const timer = setInterval(() => {
-        if (settings().progressPanelMode === "detailed" && hasActiveRun()) tui.requestRender();
+        if (hasActiveRun()) tui.requestRender();
       }, 2000);
       (timer as { unref?: () => void }).unref?.();
       // Purely informational: it lists running runs and re-renders on events. To

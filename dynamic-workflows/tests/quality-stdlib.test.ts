@@ -128,3 +128,39 @@ return { ok: res.ok, value: res.value, attempts: res.attempts, seen }`;
   assert.equal(res.result.attempts, 2);
   assert.deepEqual([...res.result.seen], ["none", "try higher"], "validator feedback is fed into the next attempt");
 });
+
+test("quality summary: verify/judge/completeness outcomes accumulate on the result", async () => {
+  const critic = {
+    async run(p: string, o: { schema?: unknown }) {
+      if (!o?.schema) return "ok";
+      // verify reviewers vote real; judges score 0.8; the critic flags 2 gaps.
+      if (/Adversarially review/.test(p)) return { real: true };
+      if (/Score this candidate/.test(p)) return { score: 0.8 };
+      return { complete: false, missing: ["a", "b"] };
+    },
+  };
+  const script = `export const meta = { name: 'q', description: 'quality' }
+const v1 = await verify('claim one', { reviewers: 2 })
+const v2 = await verify('claim two', { reviewers: 3 })
+const j = await judgePanel(['x', 'y'], { judges: 2 })
+const c = await completenessCheck({ task: 1 }, ['r'])
+return { v1: v1.real, v2: v2.real, best: j.score, gaps: c.missing.length }`;
+  const res = await runWorkflow(script, { agent: critic, persistLogs: false });
+  assert.deepEqual(res.quality?.verify, { checks: 2, confirmed: 2, votes: 5 });
+  assert.equal(res.quality?.judge.panels, 1);
+  assert.equal(res.quality?.judge.candidates, 2);
+  assert.equal(res.quality?.judge.bestScore, 0.8);
+  assert.deepEqual(res.quality?.completeness, { runs: 1, incomplete: 1, gaps: 2 });
+});
+
+test("quality summary: a refuted claim counts as checked, not confirmed", async () => {
+  const skeptic = {
+    async run(_p: string, o: { schema?: unknown }) {
+      return o?.schema ? { real: false } : "ok";
+    },
+  };
+  const script = `export const meta = { name: 'q2', description: 'quality' }
+return await verify('bogus claim', { reviewers: 2 })`;
+  const res = await runWorkflow(script, { agent: skeptic, persistLogs: false });
+  assert.deepEqual(res.quality?.verify, { checks: 1, confirmed: 0, votes: 2 });
+});

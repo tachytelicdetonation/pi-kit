@@ -15,6 +15,7 @@ import {
   registerEffortCommand,
   registerWorkflowCommands,
   registerWorkflowModelsCommand,
+  registerWorkflowSettingsCommand,
   saveWorkflowSettingsForCwd,
   UsageLimitScheduler,
   WorkflowManager,
@@ -146,6 +147,7 @@ export default function extension(pi: ExtensionAPI) {
   // hook below, and the explicit /workflows run <prompt> manual trigger.
   registerWorkflowCommands(pi, manager, { storage, cwd, effort });
   registerWorkflowModelsCommand(pi);
+  registerWorkflowSettingsCommand(pi, { cwd, effort });
   registerBuiltinWorkflows(pi, { cwd });
   registerAllSavedWorkflows(pi, cwd, storage, manager);
   registerEffortCommand(pi, effort);
@@ -179,7 +181,10 @@ export default function extension(pi: ExtensionAPI) {
     // Deliver a background run's result into the conversation when it finishes.
     // The live settings loader lets `deliveredResultMaxChars` take effect without
     // a restart.
-    installResultDelivery(pi, manager, { loadSettings: () => loadWorkflowSettings({ cwd }) });
+    installResultDelivery(pi, manager, {
+      loadSettings: () => loadWorkflowSettings({ cwd }),
+      notify: (message, type) => ctx.ui.notify(message, type),
+    });
     // Live "workflows running" panel below the input (focus + enter to open).
     // Pass a live settings loader so /workflows-progress (compact|detailed) takes
     // effect without a restart.

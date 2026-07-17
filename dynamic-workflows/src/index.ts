@@ -198,5 +198,6 @@ export {
   type ViewKind,
 } from "./workflow-ui.js";
 export { registerWorkflowModelsCommand } from "./workflows-models-command.js";
+export { registerWorkflowSettingsCommand } from "./workflows-settings-command.js";
 export type { Worktree } from "./worktree.js";
 export { createWorktree, removeWorktree } from "./worktree.js";

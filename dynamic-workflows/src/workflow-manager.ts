@@ -399,6 +399,7 @@ export class WorkflowManager extends EventEmitter {
           progress();
         },
         onAgentStart: (event) => {
+          const at = Date.now();
           managed.snapshot.agents.push({
             id: managed.snapshot.agents.length + 1,
             label: event.label,
@@ -406,6 +407,10 @@ export class WorkflowManager extends EventEmitter {
             prompt: event.prompt,
             status: "running",
             model: event.model,
+            // Liveness stamps: startedAt drives run elapsed; lastEventAt drives the
+            // per-agent stall flag and is bumped on each observed agent event below.
+            startedAt: at,
+            lastEventAt: at,
           });
           this.emit("agentStart", { runId: managed.runId, ...event });
           progress();
@@ -421,6 +426,7 @@ export class WorkflowManager extends EventEmitter {
             agent.errorCode = event.errorCode;
             agent.recoverable = event.recoverable;
             agent.tokens = event.tokens;
+            agent.lastEventAt = Date.now();
             if (event.tokenUsage) agent.tokenUsage = event.tokenUsage;
             if (event.model) agent.model = event.model;
           }
@@ -433,6 +439,9 @@ export class WorkflowManager extends EventEmitter {
             .find((a) => a.label === event.label && a.status === "running");
           if (agent) {
             agent.history = event.history;
+            // A streamed history entry is the freshest proof the agent is alive —
+            // the strongest signal that resets the stall clock mid-agent.
+            agent.lastEventAt = Date.now();
           }
           this.emit("agentHistory", { runId: managed.runId, ...event });
           progress();
@@ -440,6 +449,10 @@ export class WorkflowManager extends EventEmitter {
         onTokenUsage: (usage) => {
           managed.snapshot.tokenUsage = usage;
           this.emit("tokenUsage", { runId: managed.runId, usage });
+          progress();
+        },
+        onCheckpointAuto: () => {
+          managed.snapshot.autoCheckpointCount = (managed.snapshot.autoCheckpointCount ?? 0) + 1;
           progress();
         },
       });

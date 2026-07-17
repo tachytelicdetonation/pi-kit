@@ -80,7 +80,7 @@ return await agent(
 - **Journaled resume** — replay completed agents after interruption without rerunning them or spending their tokens again. The orchestrator can also resume with an **edited script** (`resumeFromRunId`): unchanged `agent()` calls replay from cache and only edited/new ones re-run — so a single bad prompt no longer means paying to re-run the whole workflow.
 - **Git worktree isolation** — let parallel agents edit safely on throwaway branches with `isolation: "worktree"`.
 - **Measured usage** — report real tokens and cost from each subagent session; add run, phase, or agent budgets only when you want them.
-- **Visible background runs** — track phases, agents, models, fresh/cache tokens, cost, and live tok/s from the progress panel or `/workflows` navigator.
+- **Visible background runs** — track phases, agents, models, fresh/cache tokens, cost, and live tok/s from the progress panel or `/workflows` navigator. Delivered results surface cross-check outcomes (verify/judge/completeness) and warn when checkpoints were auto-approved.
 - **Quality patterns** — compose `verify()`, `judgePanel()`, `loopUntilDry()`, and `completenessCheck()` instead of rebuilding review loops.
 - **Reusable workflows** — save any run as a command and call saved workflows from other workflows.
 
@@ -121,6 +121,7 @@ For an always-on exhaustive mode, use `/ultracode`; `/effort high` is the lighte
 | `/workflows-progress compact\|detailed\|status` | Choose the live-panel detail level, including fresh/cache token splits |
 | `/workflows-progress-max <N>` | Limit agents shown per phase in detailed mode |
 | `/workflows-models` | Map model tiers and thinking levels |
+| `/workflows-settings` | Open the interactive settings hub |
 | `/ultracode [off]` | Toggle exhaustive automatic workflows |
 | `/effort off\|high\|ultra` | Set the standing orchestration effort |
 

@@ -49,6 +49,8 @@ export interface JournalEntry {
    * which agent finished first. Absent on older journal entries.
    */
   storeDelta?: Record<string, unknown>;
+  /** True when this journaled checkpoint reply was auto-resolved headlessly (no human was asked). */
+  auto?: boolean;
 }
 
 /**
@@ -56,12 +58,41 @@ export interface JournalEntry {
  * the 16-concurrent / 1000-total caps and the token budget hold across nesting
  * instead of each level getting its own limiter and counters.
  */
+/**
+ * Aggregate outcomes of the quality stdlib (verify/judgePanel/completenessCheck)
+ * for one run, so hosts can show whether the result was cross-checked — the
+ * confidence signal, not just the answer. Accumulated on the shared runtime so
+ * nested workflow() calls contribute, and re-populated identically on journal
+ * replay (the helpers re-run their reductions over replayed agent results).
+ */
+export interface QualitySummary {
+  verify: { checks: number; confirmed: number; votes: number };
+  judge: { panels: number; candidates: number; bestScore: number };
+  completeness: { runs: number; incomplete: number; gaps: number };
+}
+
+/** Fold a sandbox child's quality tally into the shared runtime (nested runs roll up). */
+function mergeQuality(target: QualitySummary, source: QualitySummary): void {
+  target.verify.checks += source.verify.checks;
+  target.verify.confirmed += source.verify.confirmed;
+  target.verify.votes += source.verify.votes;
+  target.judge.panels += source.judge.panels;
+  target.judge.candidates += source.judge.candidates;
+  target.judge.bestScore = Math.max(target.judge.bestScore, source.judge.bestScore);
+  target.completeness.runs += source.completeness.runs;
+  target.completeness.incomplete += source.completeness.incomplete;
+  target.completeness.gaps += source.completeness.gaps;
+}
+
 export interface SharedRuntime {
   limiter: <T>(fn: () => Promise<T>) => Promise<T>;
   agentCount: number;
   spent: number;
   tokenUsage: { input: number; output: number; total: number; cost: number; cacheRead: number; cacheWrite: number };
   depth: number;
+  quality: QualitySummary;
+  /** checkpoint() gates auto-resolved headlessly (no human was asked). */
+  autoCheckpoints: Array<{ prompt: string; reply: unknown }>;
 }
 
 export interface WorkflowRunOptions extends WorkflowAgentOptions {
@@ -113,6 +144,8 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
    * default (and journals it), so a detached/background run never hangs.
    */
   confirm?: (promptText: string, options: CheckpointOptions) => Promise<unknown>;
+  /** Called when a checkpoint() auto-resolves headlessly (no UI); lets the host surface it live. */
+  onCheckpointAuto?: (event: { prompt: string; reply: unknown }) => void;
   onLog?: (message: string) => void;
   onPhase?: (title: string) => void;
   onAgentStart?: (event: { label: string; phase?: string; prompt: string; model?: string }) => void;
@@ -147,6 +180,10 @@ export interface WorkflowRunResult<T = unknown> {
   agentCount: number;
   durationMs: number;
   runId?: string;
+  /** Aggregate quality-stdlib outcomes (top-level runs only) — the cross-check signal behind the result. */
+  quality?: QualitySummary;
+  /** checkpoint() gates auto-resolved headlessly, when any (top-level runs only). */
+  autoCheckpoints?: Array<{ prompt: string; reply: unknown }>;
   tokenUsage?: {
     input: number;
     output: number;
@@ -285,6 +322,12 @@ export async function runWorkflow<T = unknown>(
     spent: 0,
     tokenUsage: { input: 0, output: 0, total: 0, cost: 0, cacheRead: 0, cacheWrite: 0 },
     depth: 0,
+    quality: {
+      verify: { checks: 0, confirmed: 0, votes: 0 },
+      judge: { panels: 0, candidates: 0, bestScore: 0 },
+      completeness: { runs: 0, incomplete: 0, gaps: 0 },
+    },
+    autoCheckpoints: [],
   };
   const limiter = shared.limiter;
 
@@ -698,7 +741,11 @@ export async function runWorkflow<T = unknown>(
       )
     ).filter(Boolean) as Array<{ real?: boolean; reason?: string }>;
     const realCount = votes.filter((v) => v?.real).length;
-    return { real: votes.length > 0 && realCount / votes.length >= threshold, realCount, total: votes.length, votes };
+    const real = votes.length > 0 && realCount / votes.length >= threshold;
+    shared.quality.verify.checks++;
+    shared.quality.verify.votes += votes.length;
+    if (real) shared.quality.verify.confirmed++;
+    return { real, realCount, total: votes.length, votes };
   };
 
   const JUDGE_SCHEMA = {
@@ -736,6 +783,11 @@ export async function runWorkflow<T = unknown>(
     // Highest mean score; stable tie-break by input index.
     let best = scored[0];
     for (const s of scored) if (s.score > best.score || (s.score === best.score && s.index < best.index)) best = s;
+    shared.quality.judge.panels++;
+    shared.quality.judge.candidates += scored.length;
+    if (best && typeof best.score === "number") {
+      shared.quality.judge.bestScore = Math.max(shared.quality.judge.bestScore, best.score);
+    }
     return best;
   };
 
@@ -782,11 +834,18 @@ export async function runWorkflow<T = unknown>(
     properties: { complete: { type: "boolean" }, missing: { type: "array", items: { type: "string" } } },
     required: ["complete"],
   };
-  const _completenessCheck = (taskArgs: unknown, results: unknown) =>
-    agent(
+  const _completenessCheck = async (taskArgs: unknown, results: unknown) => {
+    const result = (await agent(
       `Given the task and the results gathered so far, list what is still MISSING (modalities not covered, claims unverified, gaps). Be specific and concise.\n\nTask:\n${JSON.stringify(taskArgs)}\n\nResults so far:\n${JSON.stringify(results).slice(0, 4000)}`,
       { label: "completeness critic", schema: COMPLETENESS_SCHEMA },
-    );
+    )) as { complete?: boolean; missing?: unknown[] } | null;
+    shared.quality.completeness.runs++;
+    if (result && result.complete === false) {
+      shared.quality.completeness.incomplete++;
+      shared.quality.completeness.gaps += Array.isArray(result.missing) ? result.missing.length : 0;
+    }
+    return result;
+  };
 
   // Thin bounded-retry / validation-gate combinators. Sugar over the for-loop +
   // agent() pattern, but each attempt is a real agent() call so it auto-journals
@@ -842,12 +901,16 @@ export async function runWorkflow<T = unknown>(
     const cached = options.resumeJournal?.get(callIndex);
     if (cached != null && cached.hash === callHash && callIndex < state.firstMiss) {
       shared.agentCount++;
-      return cached.result; // replay the journaled human reply
+      // Replay the journaled reply; re-record auto-resolutions so the run's
+      // auto-checkpoint tally survives resume exactly.
+      if (cached.auto) shared.autoCheckpoints.push({ prompt: promptText, reply: cached.result });
+      return cached.result;
     }
     if (cached == null || cached.hash !== callHash) state.firstMiss = Math.min(state.firstMiss, callIndex);
     shared.agentCount++;
 
     let reply: unknown;
+    let autoResolved = false;
     if (options.confirm) {
       reply = await options.confirm(promptText, checkpointOptions);
     } else if (checkpointOptions.headless === "abort") {
@@ -857,10 +920,25 @@ export async function runWorkflow<T = unknown>(
         { recoverable: false },
       );
     } else {
+      // Headless: the gate resolves to its declared default WITHOUT a human seeing
+      // it. Record and surface it — a silent auto-approval must not look human-made.
       reply = checkpointOptions.default ?? true;
+      autoResolved = true;
+      shared.autoCheckpoints.push({ prompt: promptText, reply });
+      options.onCheckpointAuto?.({ prompt: promptText, reply });
+      const short = (v: unknown) => {
+        const text = (typeof v === "string" ? v : JSON.stringify(v)).replace(/\s+/g, " ").trim();
+        return text.length > 60 ? `${text.slice(0, 59)}…` : text;
+      };
+      log(`⚠ checkpoint auto-approved (no UI to ask): "${short(promptText)}" → ${short(reply)}`);
     }
     throwIfAborted();
-    options.onAgentJournal?.({ index: callIndex, hash: callHash, result: reply });
+    options.onAgentJournal?.({
+      index: callIndex,
+      hash: callHash,
+      result: reply,
+      ...(autoResolved ? { auto: true } : {}),
+    });
     return reply;
   };
 
@@ -875,6 +953,7 @@ export async function runWorkflow<T = unknown>(
       budgetSpent: shared.spent,
       signal: options.signal,
       compatibilityMode: Boolean(options.hostContext),
+      onQuality: (quality) => mergeQuality(shared.quality, quality as QualitySummary),
       handlers: {
         agent: (prompt, sandboxOptions) => agent(prompt, sandboxOptions as AgentOptions),
         workflow: workflowFn,
@@ -903,6 +982,14 @@ export async function runWorkflow<T = unknown>(
       durationMs: Date.now() - started,
       runId,
       tokenUsage: shared.tokenUsage,
+      // Run-global confidence signals accumulate on the shared runtime; only the
+      // top-level run reports them (a nested workflow() contributes upward).
+      ...(options.sharedRuntime
+        ? {}
+        : {
+            quality: shared.quality,
+            ...(shared.autoCheckpoints.length > 0 ? { autoCheckpoints: shared.autoCheckpoints } : {}),
+          }),
     };
   } finally {
     // Dispose the store only when this run created it; nested runs inherit the

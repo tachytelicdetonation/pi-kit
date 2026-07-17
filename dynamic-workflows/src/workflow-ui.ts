@@ -17,8 +17,8 @@ import type { ExtensionAPI, ExtensionUIContext, Theme } from "@earendil-works/pi
 import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
 import { parseKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { AgentUsage } from "./agent.js";
-import type { WorkflowAgentSnapshot, WorkflowSnapshot } from "./display.js";
-import { aggregateAgentUsage, fmtCost, fmtTokenSegment, tokenFigures } from "./display.js";
+import type { WorkflowAgentSnapshot, WorkflowAgentStatus, WorkflowSnapshot } from "./display.js";
+import { aggregateAgentUsage, fmtCost, fmtTokenSegment, statusIcon, tokenFigures } from "./display.js";
 import type { PersistedRunState } from "./run-persistence.js";
 import { registerSavedWorkflow } from "./saved-commands.js";
 import type { WorkflowManager } from "./workflow-manager.js";
@@ -83,6 +83,8 @@ interface AgentRow {
   tokens?: number;
   tokenUsage?: AgentUsage;
   model?: string;
+  /** Epoch ms of the last observed event — drives the running-agent stall flag. */
+  lastEventAt?: number;
 }
 
 /** Short, human-friendly model label: drop the provider prefix for display. */
@@ -190,6 +192,7 @@ export class NavigatorModel {
         tokens: a.tokens,
         tokenUsage: a.tokenUsage,
         model: a.model,
+        lastEventAt: a.lastEventAt,
       }));
   }
 
@@ -399,6 +402,18 @@ function pluralize(word: string, n: number): string {
   return n === 1 ? word : `${word}s`;
 }
 
+/** A running agent is flagged stalled after this long with no observed event. */
+const STALL_THRESHOLD_MS = 90_000;
+
+/** "no activity 2m" for a running agent gone quiet ≥90s, else "" (the trust/debug flag). */
+function agentStall(a: Pick<AgentRow, "status" | "lastEventAt">, now: number): string {
+  if (a.status !== "running" || typeof a.lastEventAt !== "number") return "";
+  const idleMs = now - a.lastEventAt;
+  if (idleMs < STALL_THRESHOLD_MS) return "";
+  const m = Math.floor(idleMs / 60_000);
+  return m >= 1 ? `no activity ${m}m` : `no activity ${Math.floor(idleMs / 1000)}s`;
+}
+
 /** Aggregate phase status precedence: ERR > RUN > all-done(OK) > PEND. */
 function phaseStatusColor(p: { done: number; total: number }, agents: AgentRow[]): string {
   if (agents.some((a) => a.status === "error" || a.status === "failed")) return "error";
@@ -407,7 +422,7 @@ function phaseStatusColor(p: { done: number; total: number }, agents: AgentRow[]
   return "dim";
 }
 
-const AGENT_DOT_COLOR: Record<string, string> = {
+const AGENT_STATUS_COLOR: Record<string, string> = {
   running: "warning",
   queued: "dim",
   pending: "dim",
@@ -419,6 +434,15 @@ const AGENT_DOT_COLOR: Record<string, string> = {
   skipped: "dim",
   aborted: "dim",
 };
+
+/**
+ * Per-status glyph for agent rows, so status does not rely on color alone
+ * (colorblind-safe). Uses display.ts's statusIcon (○ queued, ● running, ✓ done,
+ * ✗ error, - skipped); legacy/persisted statuses outside that set keep the dot.
+ */
+function agentStatusGlyph(status: string): string {
+  return statusIcon(status as WorkflowAgentStatus) ?? DOT;
+}
 
 /** Compute the left ("Phases") box outer width, clamped per spec §3.1. */
 function computeLeftWidth(phases: PhaseRow[], width: number): number {
@@ -476,22 +500,27 @@ function rightAgentRow(
   modelColStart: number,
   innerW: number,
   theme: ThemeLike,
+  now: number,
 ): string {
-  const dotColor = AGENT_DOT_COLOR[a.status] ?? "dim";
+  // A stalled running agent flips the row's status color to warning and appends a
+  // "no activity 2m" flag to the name — the navigator is the trust/debug surface.
+  const stall = agentStall(a, now);
+  const label = stall ? `${a.label} · ${stall}` : a.label;
+  const statusColor = stall ? "warning" : (AGENT_STATUS_COLOR[a.status] ?? "dim");
   const stats = fmtTokenSegment(tokenFigures(a.tokenUsage, a.tokens), compactTokens);
   const model = shortModel(a.model) ?? "";
 
   // Stable 2-cell marker so columns never shift on selection: "› " | "  ".
-  // Layout: <marker:2><dot><sp><name> … <model> … <stats(right-aligned)>.
+  // Layout: <marker:2><glyph><sp><name> … <model> … <stats(right-aligned)>.
   const markerW = 2;
   const statsW = visibleWidth(stats);
-  const nameStart = markerW + 2; // marker + dot + space
-  let modelStart = Math.max(nameStart + visibleWidth(a.label) + GAP_NM, markerW + modelColStart);
+  const nameStart = markerW + 2; // marker + glyph + space
+  let modelStart = Math.max(nameStart + visibleWidth(label) + GAP_NM, markerW + modelColStart);
   const statsStart = innerW - statsW;
 
   // Available room for the model block (between modelStart and stats, min 1 gap).
   let modelRoom = statsStart - 1 - modelStart;
-  let nameOut = a.label;
+  let nameOut = label;
   let modelOut = model;
   if (modelRoom < 0) {
     // No room for model: drop it (spec §4.4 step 1/2), possibly truncate name.
@@ -499,21 +528,21 @@ function rightAgentRow(
     modelStart = nameStart;
     modelRoom = 0;
     const nameRoom = Math.max(0, statsStart - 1 - nameStart);
-    nameOut = truncateToWidth(a.label, nameRoom, ELLIPSIS, false);
+    nameOut = truncateToWidth(label, nameRoom, ELLIPSIS, false);
   } else {
     modelOut = truncateToWidth(model, modelRoom, ELLIPSIS, false);
     const nameRoom = Math.max(0, modelStart - GAP_NM - nameStart);
-    nameOut = truncateToWidth(a.label, nameRoom, ELLIPSIS, false);
+    nameOut = truncateToWidth(label, nameRoom, ELLIPSIS, false);
   }
 
   const marker = selected ? theme.fg("accent", theme.bold(`${CARET} `)) : "  ";
-  const dot = theme.fg(dotColor, DOT);
+  const glyph = theme.fg(statusColor, agentStatusGlyph(a.status));
   const nameStyled = selected ? theme.fg("accent", theme.bold(nameOut)) : theme.fg("accent", nameOut);
   const modelStyled = modelOut ? theme.fg("dim", modelOut) : "";
   const statsStyled = theme.fg("dim", stats);
 
   // Assemble with explicit cell padding (visibleWidth-driven gaps).
-  let out = marker + dot + " " + nameStyled;
+  let out = marker + glyph + " " + nameStyled;
   const afterName = nameStart + visibleWidth(nameOut);
   if (modelOut) {
     out += " ".repeat(Math.max(0, modelStart - afterName)) + modelStyled;
@@ -597,6 +626,7 @@ function renderPhasesAgents(
   width: number,
   theme: ThemeLike,
   bodyCap: number,
+  now: number,
 ): string[] {
   const phases = model.phases(runId);
   // Which phase is selected drives the right pane. In "phases" view it's the
@@ -609,7 +639,7 @@ function renderPhasesAgents(
 
   // Narrow-terminal degrade: single pane (spec §7.1).
   if (width < LW_MIN + RW_MIN - 1) {
-    return renderSinglePane(state, phases, selPhaseIdx, agents, width, theme, bodyCap, inAgents);
+    return renderSinglePane(state, phases, selPhaseIdx, agents, width, theme, bodyCap, inAgents, now);
   }
 
   const leftW = computeLeftWidth(phases, width);
@@ -654,7 +684,7 @@ function renderPhasesAgents(
         continue;
       }
       const selected = inAgents && idx === state.cursor;
-      let row = rightAgentRow(agents[idx], selected, modelColStart, rightInner, theme);
+      let row = rightAgentRow(agents[idx], selected, modelColStart, rightInner, theme, now);
       if (k === bodyRows - 1 && rightRows.more) {
         row = truncateToWidth(theme.fg("dim", `  ${ELLIPSIS}`), rightInner, "", true);
       }
@@ -680,7 +710,7 @@ function renderPhasesAgents(
 function computeModelColStart(agents: AgentRow[], innerW: number): number {
   let maxName = 0;
   for (const a of agents) maxName = Math.max(maxName, visibleWidth(a.label));
-  const start = 2 /*dot+sp*/ + maxName + GAP_NM;
+  const start = 2 /*glyph+sp*/ + maxName + GAP_NM;
   // Keep model column from colliding with the right edge; cap at ~55% of field.
   return Math.min(start, Math.max(2, Math.floor(innerW * 0.55)));
 }
@@ -709,6 +739,7 @@ function renderSinglePane(
   theme: ThemeLike,
   bodyCap: number,
   inAgents: boolean,
+  now: number,
 ): string[] {
   const innerW = Math.max(1, width - 2);
   const bc = (s: string) => theme.fg("muted", s);
@@ -727,7 +758,7 @@ function renderSinglePane(
         out.push(bc(BX.v) + " ".repeat(innerW) + bc(BX.v));
         continue;
       }
-      let row = rightAgentRow(agents[idx], idx === state.cursor, modelColStart, innerW, theme);
+      let row = rightAgentRow(agents[idx], idx === state.cursor, modelColStart, innerW, theme, now);
       if (k === rows - 1 && win.more) row = truncateToWidth(theme.fg("dim", `  ${ELLIPSIS}`), innerW, "", true);
       out.push(bc(BX.v) + row + bc(BX.v));
     }
@@ -758,6 +789,7 @@ export function renderNavigator(
   width: number,
   theme: ThemeLike = PLAIN,
   viewportRows = 24,
+  now: number = Date.now(),
 ): string[] {
   const lines: string[] = [];
   const sel = (i: number, text: string) =>
@@ -811,20 +843,22 @@ export function renderNavigator(
     lines.push(...twoPaneHeader(model, state.runId, phases, width, theme));
     // Body cap: total height minus 2 header + 2 frame rules + blank + footer.
     const bodyCap = Math.max(1, viewportRows - 2 /*header*/ - 2 /*rules*/ - 2 /*blank+footer*/);
-    lines.push(...renderPhasesAgents(state, model, state.runId, width, theme, bodyCap));
+    lines.push(...renderPhasesAgents(state, model, state.runId, width, theme, bodyCap, now));
   } else if (state.kind === "agents" && state.runId && state.phase) {
     const agents = model.agents(state.runId, state.phase);
     state.clamp(agents.length);
     const phases = model.phases(state.runId);
     lines.push(...twoPaneHeader(model, state.runId, phases, width, theme));
     const bodyCap = Math.max(1, viewportRows - 2 - 2 - 2);
-    lines.push(...renderPhasesAgents(state, model, state.runId, width, theme, bodyCap));
+    lines.push(...renderPhasesAgents(state, model, state.runId, width, theme, bodyCap, now));
   } else if (state.kind === "detail" && state.runId && state.agentId != null) {
     const a = model.agentDetail(state.runId, state.agentId);
     lines.push(theme.bold(a ? a.label : "agent"));
     if (a) {
       const body: string[] = [];
       body.push(dim("Status: ") + (a.status ?? ""));
+      const stall = agentStall(a, now);
+      if (stall) body.push(theme.fg("warning", `⚠ ${stall}`));
       if (a.model) body.push(dim("Model: ") + (shortModel(a.model) ?? ""));
       if (a.error) body.push(dim("Error: ") + a.error);
       if (a.errorCode) body.push(`${dim("Error code: ")}${a.errorCode}${a.recoverable ? " (recoverable)" : ""}`);
@@ -1146,7 +1180,7 @@ export function openWorkflowNavigator(
           const titleColor = (s: string) => (_focused ? theme.fg("dim", theme.bold(s)) : theme.fg("muted", s));
           const bgColor = (s: string) => theme.bg("customMessageBg", s);
           const innerWidth = Math.max(10, width - BOX_BORDER_OVERHEAD);
-          const raw = renderNavigator(state, model, innerWidth, theme, tui.terminal?.rows ?? 24);
+          const raw = renderNavigator(state, model, innerWidth, theme, tui.terminal?.rows ?? 24, Date.now());
           const title = titleColor(" workflows ");
           const topBorder =
             borderColor("╭─") + title + borderColor("─".repeat(Math.max(0, innerWidth - 10))) + borderColor("╮");

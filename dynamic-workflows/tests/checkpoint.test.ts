@@ -83,3 +83,58 @@ await checkpoint('c', { default: 1 })
 return 1`;
   await assert.rejects(() => runWorkflow(script, { agent: noopAgent, persistLogs: false, maxAgents: 2 }), /limit/i);
 });
+
+test("checkpoint(): headless auto-approvals are recorded and marked in the journal", async () => {
+  const journal: JournalEntry[] = [];
+  const script = `export const meta = { name: 'c', description: 'checkpoint' }
+const a = await checkpoint('Delete the table?', { default: true })
+const b = await checkpoint('Pick a name', { default: 'fallback' })
+return { a, b }`;
+  const res = await runWorkflow<{ a: boolean; b: string }>(script, {
+    agent: noopAgent,
+    persistLogs: false,
+    onAgentJournal: (e) => journal.push(e),
+  });
+  assert.equal(res.result.a, true);
+  assert.equal(res.autoCheckpoints?.length, 2, "both headless gates recorded");
+  assert.equal(res.autoCheckpoints?.[0]?.prompt, "Delete the table?");
+  assert.equal(res.autoCheckpoints?.[0]?.reply, true);
+  assert.ok(journal.length === 2 && journal.every((e) => e.auto === true), "journal marks them as auto-resolved");
+});
+
+test("checkpoint(): human-confirmed gates are not marked auto", async () => {
+  const journal: JournalEntry[] = [];
+  const script = `export const meta = { name: 'c', description: 'checkpoint' }
+return await checkpoint('Proceed?', {})`;
+  const res = await runWorkflow<string>(script, {
+    agent: noopAgent,
+    persistLogs: false,
+    confirm: async () => "yes",
+    onAgentJournal: (e) => journal.push(e),
+  });
+  assert.equal(res.result, "yes");
+  assert.equal(res.autoCheckpoints, undefined, "nothing auto-resolved");
+  assert.equal(journal[0]?.auto, undefined, "a human reply is not marked auto");
+});
+
+test("checkpoint(): the auto-approval tally survives a journaled resume", async () => {
+  const script = `export const meta = { name: 'c', description: 'checkpoint' }
+const a = await checkpoint('First?', { default: true })
+const b = await checkpoint('Second?', { default: true })
+return { a, b }`;
+  const journal = new Map<number, JournalEntry>();
+  const first = await runWorkflow<{ a: boolean; b: boolean }>(script, {
+    agent: noopAgent,
+    persistLogs: false,
+    onAgentJournal: (e) => journal.set(e.index, e),
+  });
+  assert.equal(first.autoCheckpoints?.length, 2);
+
+  const second = await runWorkflow<{ a: boolean; b: boolean }>(script, {
+    agent: noopAgent,
+    persistLogs: false,
+    resumeJournal: journal,
+  });
+  assert.equal(second.autoCheckpoints?.length, 2, "replayed auto-approvals re-record");
+  assert.equal(second.autoCheckpoints?.[1]?.prompt, "Second?");
+});
