@@ -46,7 +46,7 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
             const text = ctx.lastComponent ?? new TC("", 0, 0);
             const tw = (0, config_js_1.termWidth)() || 80;
             const rawCmd = String(args.command ?? "");
-            const err = kit.statusOf(ctx) === "err";
+            const err = (0, kit.isErr)(ctx);
             const budget = ctx.expanded ? tw : Math.max(8, tw - 24);
             const cmd = rawCmd.length === 0
                 ? "…"
@@ -106,18 +106,25 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
                     }
                     return (0, render_js_1.fillToolBackground)(`${body.join("\n")}\n`, isErr ? config_js_1.BG_ERROR : undefined, w);
                 };
+                // Width-reactive re-render. Install the wrapper ONCE per component
+                // (guard __kitWrapped) — re-wrapping every pass on a reused
+                // lastComponent stacks layers that fight after a resize. Each pass
+                // just swaps in the fresh renderFn + signature.
+                text.__kitRenderFn = renderFn;
+                text.__kitSig = `${ctx.expanded ? "1" : "0"}:${d.exitCode ?? "?"}:${output.length}:${duration}`;
+                text.__kitKey = undefined;
                 text.setText(renderFn(rw));
-                const baseRender = typeof text.render === "function" ? text.render.bind(text) : null;
-                if (baseRender) {
-                    let key;
+                if (!text.__kitWrapped) {
+                    text.__kitWrapped = true;
+                    const base = text.render.bind(text);
                     text.render = (w) => {
                         const width = Math.max(1, Math.floor(w || (0, config_js_1.termWidth)()));
-                        const k = `bash:${ctx.expanded ? "1" : "0"}:${width}:${d.exitCode ?? "?"}:${output.length}:${duration}`;
-                        if (key !== k) {
-                            text.setText(renderFn(width));
-                            key = k;
+                        const key = `${width}|${text.__kitSig}`;
+                        if (text.__kitKey !== key) {
+                            text.setText(text.__kitRenderFn(width));
+                            text.__kitKey = key;
                         }
-                        return baseRender(width);
+                        return base(width);
                     };
                 }
                 return text;

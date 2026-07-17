@@ -90,7 +90,7 @@ function registerGrepTool(pi, cwd, fffService, sdkTool, TextComp) {
         renderCall(args, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
             const text = ctx.lastComponent ?? new T("", 0, 0);
-            const err = kit.statusOf(ctx) === "err";
+            const err = (0, kit.isErr)(ctx);
             const pattern = args.pattern == null ? "" : String(args.pattern);
             const path = args.path == null || String(args.path).length === 0 ? "." : (0, helpers_js_1.shortPath)(cwd, home, String(args.path));
             const title = `${theme.fg(err ? "error" : "toolTitle", theme.bold("grep"))} ${theme.fg("toolTitle", `/${pattern}/`)}${theme.fg("dim", ` in ${path}`)}`;
@@ -125,14 +125,17 @@ function registerGrepTool(pi, cwd, fffService, sdkTool, TextComp) {
                 const stats = (0, kit.grepStats)(d.text);
                 const matches = stats.matches || d.matchCount || 0;
                 const files = stats.files;
-                const countStr = `${matches} ${matches === 1 ? "match" : "matches"} in ${(0, kit.plural)(files, "file")}`;
+                // Drop "in N files" when the parse yielded no files (would read "in 0 files").
+                const countStr = files > 0
+                    ? `${matches} ${matches === 1 ? "match" : "matches"} in ${(0, kit.plural)(files, "file")}`
+                    : `${matches} ${matches === 1 ? "match" : "matches"}`;
                 const duration = (0, kit.durationSeg)(result);
                 const SHOW_ALL_MAX = 8;
                 // Many matches, collapsed → per-file count strip (where they cluster).
                 if (!ctx.expanded && matches > SHOW_ALL_MAX) {
                     const strip = (0, kit.grepFileStrip)(stats.perFile, Math.max(20, tw - 2), 6);
                     const body = strip.map((l) => `${config_js_1.TOOL_RESULT_INDENT}${l}`);
-                    const mk = (0, kit.marker)([countStr, duration, "ctrl+o"]);
+                    const mk = (0, kit.marker)([`… ${countStr}`, duration, "ctrl+o"]);
                     if (mk)
                         body.push(mk);
                     text.setText((0, render_js_1.fillToolBackground)(`${body.join("\n")}\n`, undefined));
@@ -146,13 +149,28 @@ function registerGrepTool(pi, cwd, fffService, sdkTool, TextComp) {
                         out.push(mk);
                     return `${out.join("\n")}\n`;
                 };
-                // Immediate plain (indented); renderGrepResults self-indents when it swaps in.
+                // Cache the highlighted render by content key: a redraw reuses it
+                // directly (no plain flash) and never re-invalidates identical content
+                // (which would loop). Expanded → no line cap (Infinity).
+                const hlKey = `grep:${ctx.expanded ? 1 : 0}`;
+                const seq = (ctx.state.__seq = (ctx.state.__seq || 0) + 1);
+                const owner = text;
+                if (ctx.state.__hlKey === hlKey && ctx.state.__hlText) {
+                    text.setText((0, render_js_1.fillToolBackground)(ctx.state.__hlText));
+                    return text;
+                }
                 const plain = d.text.split("\n").filter((l) => l.trim());
                 const plainShown = ctx.expanded ? plain : plain.slice(0, SHOW_ALL_MAX * 2);
                 text.setText((0, render_js_1.fillToolBackground)(withMarker(plainShown.map((l) => `${config_js_1.TOOL_RESULT_INDENT}${l}`))));
-                (0, render_js_1.renderGrepResults)(d.text, d.pattern)
+                (0, render_js_1.renderGrepResults)(d.text, d.pattern, ctx.expanded ? Infinity : undefined)
                     .then((rendered) => {
-                    text.setText((0, render_js_1.fillToolBackground)(withMarker(rendered.split("\n"))));
+                    if (ctx.state.__seq !== seq)
+                        return;
+                    if (ctx.lastComponent && ctx.lastComponent !== owner)
+                        return;
+                    ctx.state.__hlKey = hlKey;
+                    ctx.state.__hlText = withMarker(rendered.split("\n"));
+                    owner.setText((0, render_js_1.fillToolBackground)(ctx.state.__hlText));
                     ctx.invalidate?.();
                 })
                     .catch(() => { });

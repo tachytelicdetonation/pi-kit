@@ -31,7 +31,7 @@ function registerLsTool(pi, cwd, _fffService, sdkTool, TextComp) {
         renderCall(args, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
             const text = ctx.lastComponent ?? new TC("", 0, 0);
-            const err = kit.statusOf(ctx) === "err";
+            const err = (0, kit.isErr)(ctx);
             const rawPath = args.path;
             const path = rawPath === null || rawPath === undefined || String(rawPath).length === 0
                 ? "."
@@ -58,12 +58,15 @@ function registerLsTool(pi, cwd, _fffService, sdkTool, TextComp) {
                 const limit = ctx.expanded ? -1 : PREVIEW;
                 const hidden = ctx.expanded ? 0 : Math.max(0, info.total - PREVIEW);
                 const rows = (0, render_js_1.renderTree)(d.text, d.path, limit).split("\n").map((l) => `${config_js_1.TOOL_RESULT_INDENT}${l}`);
-                const mk = (0, kit.marker)([
-                    `${info.total} ${info.total === 1 ? "entry" : "entries"}`,
-                    info.dirs ? (0, kit.plural)(info.dirs, "dir") : "",
-                    duration,
-                    hidden > 0 ? "ctrl+o" : "",
-                ]);
+                // Zero-chrome: a small fully-shown listing needs no summary line.
+                const mk = (hidden > 0 || ctx.expanded)
+                    ? (0, kit.marker)([
+                        `${hidden > 0 ? "… " : ""}${info.total} ${info.total === 1 ? "entry" : "entries"}`,
+                        info.dirs ? (0, kit.plural)(info.dirs, "dir") : "",
+                        duration,
+                        hidden > 0 ? "ctrl+o" : "",
+                    ])
+                    : "";
                 const body = rows.slice();
                 if (mk)
                     body.push(mk);

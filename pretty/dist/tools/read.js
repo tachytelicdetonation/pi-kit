@@ -44,7 +44,7 @@ function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
         renderCall(args, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
             const text = ctx.lastComponent ?? new TC("", 0, 0);
-            const err = kit.statusOf(ctx) === "err";
+            const err = (0, kit.isErr)(ctx);
             const p2 = (0, helpers_js_1.shortPath)(cwd, home, String(args.path ?? ""));
             const off = typeof args.offset === "number" && args.offset > 0 ? `:${args.offset}` : "";
             const title = `${theme.fg(err ? "error" : "toolTitle", theme.bold("read"))} ${theme.fg("toolTitle", p2)}${theme.fg("dim", off)}`;
@@ -90,11 +90,14 @@ function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
                     const padNo = " ".repeat(Math.max(0, nw - no.length));
                     return `${config_js_1.TOOL_RESULT_INDENT}${config_js_1.FG_LNUM}${padNo}${no}${config_js_1.RST} ${config_js_1.FG_RULE}│${config_js_1.RST} ${code}${config_js_1.RST}`;
                 };
-                const markerLine = () => (0, kit.marker)([
-                    hidden > 0 ? `… +${(0, kit.plural)(hidden, "line")}` : "",
-                    (0, helpers_js_1.humanSize)(bytes),
-                    hidden > 0 ? "ctrl+o" : "",
-                ]);
+                // Zero-chrome: a fully-shown small file gets no marker; expanded shows size.
+                const markerLine = () => (hidden > 0 || ctx.expanded)
+                    ? (0, kit.marker)([
+                        hidden > 0 ? `… +${(0, kit.plural)(hidden, "line")}` : "",
+                        (0, helpers_js_1.humanSize)(bytes),
+                        hidden > 0 ? "ctrl+o" : "",
+                    ])
+                    : "";
                 const build = (codeLines) => {
                     const out = codeLines.slice(0, showCount).map((code, i) => gutter(i, code));
                     const m = markerLine();
@@ -102,12 +105,27 @@ function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
                         out.push(m);
                     return `${out.join("\n")}\n`;
                 };
-                // Immediate plain render (Shiki is async); highlight swaps in when ready.
+                // Highlight is async. Cache the rendered result by a content key so a
+                // redraw reuses it directly (no plain flash) and — crucially — never
+                // re-invalidates on identical content, which would be an infinite loop.
+                const key = `${ctx.expanded ? 1 : 0}:${cw}:${showCount}`;
+                const seq = (ctx.state.__seq = (ctx.state.__seq || 0) + 1);
+                const owner = text;
+                if (ctx.state.__hlKey === key && ctx.state.__hlText) {
+                    text.setText((0, render_js_1.fillToolBackground)(ctx.state.__hlText, config_js_1.BG_BASE));
+                    return text;
+                }
                 const plain = lines.slice(0, showCount).map((l) => (kit.vis(l) > cw ? (0, kit.trunc)(l, cw, `${config_js_1.FG_DIM}›`) : l));
                 text.setText((0, render_js_1.fillToolBackground)(build(plain), config_js_1.BG_BASE));
                 (0, render_js_1.renderFileContent)(d.content, d.filePath, offset, showCount, cw)
                     .then((hl) => {
-                    text.setText((0, render_js_1.fillToolBackground)(build(hl.split("\n")), config_js_1.BG_BASE));
+                    if (ctx.state.__seq !== seq)
+                        return; // superseded by a newer pass
+                    if (ctx.lastComponent && ctx.lastComponent !== owner)
+                        return; // component swapped
+                    ctx.state.__hlKey = key;
+                    ctx.state.__hlText = build(hl.split("\n"));
+                    owner.setText((0, render_js_1.fillToolBackground)(ctx.state.__hlText, config_js_1.BG_BASE));
                     ctx.invalidate?.();
                 })
                     .catch(() => { });

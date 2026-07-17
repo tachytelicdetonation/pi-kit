@@ -30,21 +30,47 @@ exports.trunc = trunc;
 // renderResult knows success/error (it only runs once there's a result) and
 // stashes it on the SHARED ctx.state; renderCall reads it on the next pass.
 const GLYPHS = { ok: "✓", err: "✗", run: "·" };
-function markDone(ctx, isError) {
-    if (ctx.state)
-        ctx.state.__kit = isError ? "err" : "ok";
-}
+// Status resolves from shared ctx.state.__kit (set by renderResult), falling back
+// to the host-authoritative ctx.isError, then "running". Reading ctx.isError here
+// means error headers/glyphs turn red on the FIRST pass without waiting for a redraw.
 function statusOf(ctx) {
-    return (ctx.state && ctx.state.__kit) || "run";
+    const s = ctx.state && ctx.state.__kit;
+    if (s)
+        return s;
+    return ctx.isError ? "err" : "run";
 }
 function glyph(ctx) {
     const s = statusOf(ctx);
+    if (ctx.state)
+        ctx.state.__kitDrawn = s; // record what actually rendered
     const col = s === "err" ? c.FG_RED : s === "ok" ? c.FG_GREEN : c.FG_DIM;
     return `${col}${GLYPHS[s]}${c.RST}`;
+}
+// renderResult marks completion. Because renderCall (the header) already ran THIS
+// pass with the stale "running" glyph, we schedule exactly one deferred redraw so
+// the ✓/✗ appears. Deferred (microtask) because ctx.invalidate() re-enters
+// updateDisplay synchronously — calling it mid-pass would duplicate children. It
+// self-terminates: after the redraw, glyph() records __kitDrawn === __kit → no reschedule.
+function markDone(ctx, isError) {
+    if (!ctx.state)
+        return;
+    const next = isError ? "err" : "ok";
+    ctx.state.__kit = next;
+    if (ctx.state.__kitDrawn !== next && !ctx.state.__kitScheduled) {
+        ctx.state.__kitScheduled = true;
+        queueMicrotask(() => {
+            ctx.state.__kitScheduled = false;
+            ctx.invalidate?.();
+        });
+    }
+}
+function isErr(ctx) {
+    return !!ctx.isError || statusOf(ctx) === "err";
 }
 exports.markDone = markDone;
 exports.statusOf = statusOf;
 exports.glyph = glyph;
+exports.isErr = isErr;
 
 // --- header grammar: {glyph} {title+primary} {dim annots} ----------------
 function header(ctx, titledPrimary, annots) {
@@ -92,8 +118,9 @@ function previewWindow(lines, opts = {}) {
     if (n <= inlineMax)
         return { head: out, tail: [], hidden: 0 };
     const h = out.slice(0, head);
-    const t = tail > 0 ? out.slice(n - tail) : [];
-    return { head: h, tail: t, hidden: n - head - tail };
+    // Guard: never let tail overlap head (matters if a caller passes head+tail > inlineMax).
+    const t = tail > 0 ? out.slice(Math.max(head, n - tail)) : [];
+    return { head: h, tail: t, hidden: Math.max(0, n - head - t.length) };
 }
 exports.previewWindow = previewWindow;
 
@@ -103,6 +130,9 @@ exports.previewWindow = previewWindow;
 function columns(cells, width, gap = 2) {
     if (!cells.length)
         return [];
+    // Truncate any cell wider than the whole width so a single long name can't
+    // produce an over-wide row.
+    cells = cells.map((s) => (vis(s) > width ? trunc(s, width) : s));
     const widths = cells.map(vis);
     const colW = Math.max(...widths) + gap;
     const cols = Math.max(1, Math.min(cells.length, Math.floor(width / colW) || 1));
@@ -130,7 +160,9 @@ function grepStats(text) {
     const perFile = new Map();
     let matches = 0;
     for (const line of String(text ?? "").split("\n")) {
-        const m = line.match(/^(.+?)[:-](\d+)[:-]/);
+        // Match lines only ("file:line:content"). rg CONTEXT lines use dashes
+        // ("file-line-content") — counting those inflates the match total.
+        const m = line.match(/^(.+?):(\d+):/);
         if (!m)
             continue;
         const file = m[1];
@@ -158,7 +190,7 @@ function dirHistogram(paths, topN = 3) {
         if (!t)
             continue;
         const slash = t.lastIndexOf("/");
-        const dir = slash > 0 ? t.slice(0, slash) : ".";
+        const dir = slash > 0 ? t.slice(0, slash) : slash === 0 ? "/" : ".";
         perDir.set(dir, (perDir.get(dir) || 0) + 1);
     }
     const entries = [...perDir.entries()].sort((a, b) => b[1] - a[1]);

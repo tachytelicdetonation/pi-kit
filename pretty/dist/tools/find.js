@@ -127,7 +127,7 @@ function registerFindTool(pi, cwd, fffService, sdkTool, TextComp) {
             (0, config_js_1.resolveBaseBackground)(theme);
             const a = args;
             const text = ctx.lastComponent ?? new TC("", 0, 0);
-            const err = kit.statusOf(ctx) === "err";
+            const err = (0, kit.isErr)(ctx);
             const pattern = a.pattern == null ? "" : String(a.pattern);
             const path = a.path == null || String(a.path).length === 0 ? "." : (0, helpers_js_1.shortPath)(cwd, home, String(a.path));
             const title = `${theme.fg(err ? "error" : "toolTitle", theme.bold("find"))} ${theme.fg("toolTitle", pattern)}${theme.fg("dim", ` in ${path}`)}`;
@@ -163,7 +163,7 @@ function registerFindTool(pi, cwd, fffService, sdkTool, TextComp) {
                     // Collapsed → dir histogram (where the files cluster).
                     const hist = (0, kit.dirHistogram)(paths, 3);
                     const body = [`${config_js_1.TOOL_RESULT_INDENT}${hist.line}`];
-                    const mk = (0, kit.marker)([fileSeg, (0, kit.plural)(hist.dirs, "dir"), duration, "ctrl+o"]);
+                    const mk = (0, kit.marker)([`… ${fileSeg}`, (0, kit.plural)(hist.dirs, "dir"), duration, "ctrl+o"]);
                     if (mk)
                         body.push(mk);
                     text.setText((0, render_js_1.fillToolBackground)(`${body.join("\n")}${noticeStr}\n`));
@@ -173,7 +173,7 @@ function registerFindTool(pi, cwd, fffService, sdkTool, TextComp) {
                     .split("\n")
                     .map((l) => `${config_js_1.TOOL_RESULT_INDENT}${l}`);
                 const mk = (0, kit.marker)([fileSeg, duration]);
-                const body = mk ? [mk, ...rendered] : rendered;
+                const body = mk ? [...rendered, mk] : rendered;
                 text.setText((0, render_js_1.fillToolBackground)(`${body.join("\n")}${noticeStr}\n`));
                 return text;
             }

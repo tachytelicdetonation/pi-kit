@@ -172,7 +172,8 @@ function fillToolBackground(text, bg = config_js_1.BG_BASE, width) {
         // body line, so padding was always skipped → a configured/themed tool
         // background never filled the row. Pad unconditionally so the surface is
         // a clean full-width block; with the default (no-tint) bg it's a no-op.
-        const fitted = _truncateToWidth(line, width, "", true);
+        // A cut line ends in a dim › rather than silently vanishing at the edge.
+        const fitted = _truncateToWidth(line, width, `${config_js_1.FG_DIM}›${config_js_1.RST}`, true);
         const stripped = preserveBoxBackground(fitted);
         return bg ? bg + stripped : stripped;
     })
@@ -320,7 +321,7 @@ function renderFindResults(text, theme) {
 // ---------------------------------------------------------------------------
 // Grep — highlighted matches with line numbers
 // ---------------------------------------------------------------------------
-async function renderGrepResults(text, pattern) {
+async function renderGrepResults(text, pattern, limit = config_js_1.MAX_PREVIEW_LINES) {
     const lines = (0, helpers_js_1.normalizeLineEndings)(text).split("\n");
     if (!lines.length || (lines.length === 1 && !lines[0].trim()))
         return `${config_js_1.FG_DIM}(no matches)${config_js_1.RST}`;
@@ -335,8 +336,8 @@ async function renderGrepResults(text, pattern) {
         /* skip highlighting */
     }
     for (const line of lines) {
-        if (count >= config_js_1.MAX_PREVIEW_LINES) {
-            out.push(`${config_js_1.FG_DIM}  … more matches${config_js_1.RST}`);
+        if (count >= limit) {
+            out.push(`${config_js_1.TOOL_RESULT_INDENT}${config_js_1.FG_DIM}… more matches (ctrl+o)${config_js_1.RST}`);
             break;
         }
         const fileMatch = line.match(/^(.+?)[:-](\d+)[:-](.*)$/);

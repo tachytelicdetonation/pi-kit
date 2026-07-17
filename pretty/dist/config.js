@@ -237,10 +237,12 @@ function fileIcon(fp) {
     if (NAME_ICON[base])
         return `${NAME_ICON[base]} `;
     const ext = (0, node_path_1.extname)(fp).slice(1).toLowerCase();
-    return EXT_ICON[ext] ? `${EXT_ICON[ext]} ` : `${exports.NF_DEFAULT} `;
+    // Default icon built from the CURRENT palette (NF_DEFAULT froze the dark one).
+    return EXT_ICON[ext] ? `${EXT_ICON[ext]} ` : `${exports.FG_DIM}\uf15b${exports.RST} `;
 }
 function dirIcon() {
-    return exports.USE_ICONS ? `${exports.NF_DIR} ` : "";
+    // Built fresh so the dir-icon color follows a light/dark palette swap.
+    return exports.USE_ICONS ? `${exports.FG_BLUE}\ue5ff${exports.RST} ` : "";
 }
 const EXT_LANG = {
     ts: "typescript",
