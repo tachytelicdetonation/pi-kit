@@ -7,6 +7,7 @@ const helpers_js_1 = require("../helpers.js");
 const render_js_1 = require("../render.js");
 const tui_text_js_1 = require("../tui-text.js");
 const kit = require("../kit.js");
+const runs = require("../runs.js");
 const metrics_js_1 = require("./metrics.js");
 const node_path_1 = require("node:path");
 const node_child_process_1 = require("node:child_process");
@@ -144,6 +145,10 @@ function registerFindTool(pi, cwd, _fffService, sdkTool, TextComp) {
         renderCall(args, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
             const a = args;
+            // Fold registry: consecutive finds in the SAME path collapse (§1).
+            runs.register("find", (0, node_path_1.resolve)(cwd, String(a.path ?? ".")), ctx);
+            if (ctx.state && ctx.state.__kitFolded && !ctx.expanded)
+                return kit.zeroText(ctx);
             const prev = ctx.lastComponent;
             const text = prev && !(prev instanceof kit.ZeroText) ? prev : new TC("", 0, 0);
             const err = (0, kit.isErr)(ctx);
@@ -155,6 +160,8 @@ function registerFindTool(pi, cwd, _fffService, sdkTool, TextComp) {
             return text;
         },
         renderResult(result, _opt, theme, ctx) {
+            if (ctx.state && ctx.state.__kitFolded && !ctx.expanded)
+                return kit.zeroText(ctx);
             (0, config_js_1.resolveBaseBackground)(theme);
             const r = result;
             const prev = ctx.lastComponent;
@@ -177,7 +184,7 @@ function registerFindTool(pi, cwd, _fffService, sdkTool, TextComp) {
                 // Segs are plain text (markerInner dims the whole line); empties drop,
                 // so zero results yields just "0 files [· duration]".
                 if (!ctx.expanded) {
-                    kit.setSummary(ctx, [fileSeg, topDirSeg(paths), duration]);
+                    kit.setSummary(ctx, [runs.runSeg(ctx), fileSeg, topDirSeg(paths), duration]);
                     return kit.zeroText(ctx);
                 }
                 // TIER 0 expanded → flat path list; each path via kit.pathSeg at the

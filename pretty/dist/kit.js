@@ -11,6 +11,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const c = require("./config.js");
 const h = require("./helpers.js");
+const liveness = require("./liveness.js"); // shared spinner/elapsed heartbeat (no external deps)
 const tui = require("@earendil-works/pi-tui"); // top-level require — jiti-aliased (see tui-text.js)
 // Re-export the zero-height result component (defined in tui-text.js per §1.1's
 // exact signatures) so tools can call kit.zeroText(ctx) as the tiering pseudocode
@@ -58,8 +59,31 @@ function glyph(ctx) {
     const s = statusOf(ctx);
     if (ctx.state)
         ctx.state.__kitDrawn = s; // record what actually rendered
+    if (s === "run") {
+        // Live: enroll in the shared heartbeat and draw the spinner frame. The
+        // frame index comes from liveness.currentFrame() — a TICK-DRIVEN counter,
+        // never Date.now() — so repeated renders within one settle return the
+        // SAME char and converge (see liveness.js convergence invariant).
+        liveness.markRunning(ctx);
+        if (ctx.state && !ctx.state.__runStart)
+            ctx.state.__runStart = Date.now(); // stamp once for the elapsed seg
+        const F = liveness.FRAMES;
+        return `${c.FG_CYAN}${F[liveness.currentFrame() % F.length]}${c.RST}`;
+    }
     const col = s === "err" ? c.FG_RED : s === "ok" ? c.FG_GREEN : c.FG_DIM;
     return `${col}${GLYPHS[s]}${c.RST}`;
+}
+// Live elapsed seg: dim `· 47s`, shown only while running and past 3s. The
+// second count is stamped by liveness.tick() (constant between ticks) so the
+// header converges within a settle exactly like the spinner does.
+function elapsedSeg(ctx) {
+    if (statusOf(ctx) !== "run")
+        return "";
+    const st = ctx.state;
+    if (!st || !st.__runStart)
+        return "";
+    const sec = st.__elapsedSec || 0;
+    return sec * 1000 >= liveness.ELAPSED_FLOOR_MS ? `${dim(SEP)}${dim(`${sec}s`)}` : "";
 }
 // renderResult marks completion. Because renderCall (the header) already ran THIS
 // pass with the stale "running" glyph, we schedule exactly one deferred redraw so
@@ -71,10 +95,22 @@ function markDone(ctx, isError) {
         return;
     const next = isError ? "err" : "ok";
     ctx.state.__kit = next;
-    if (ctx.state.__kitDrawn !== next && !ctx.state.__kitScheduled) {
+    liveness.markStopped(ctx); // run→settled: leave the heartbeat, clear if idle
+    // Schedule ONE deferred settle repaint when either (a) the glyph transitions
+    // (run→ok/err — the normal case), OR (b) this is the row's first completion.
+    // Case (b) covers a host-flagged error: glyph eager-draws "err" from
+    // ctx.isError during renderCall, so __kitDrawn already === "err" and there is
+    // no transition — yet renderResult may have just set a summary (e.g. a bash
+    // verdict) that would otherwise never paint. Guarded by __kitScheduled +
+    // __kitSettledOnce so it fires at most once per row and self-terminates: after
+    // the repaint the glyph is settled AND __kitSettledOnce is set, so a re-entrant
+    // markDone finds neither condition true and schedules nothing.
+    const needsPaint = ctx.state.__kitDrawn !== next || !ctx.state.__kitSettledOnce;
+    if (needsPaint && !ctx.state.__kitScheduled) {
         ctx.state.__kitScheduled = true;
         queueMicrotask(() => {
             ctx.state.__kitScheduled = false;
+            ctx.state.__kitSettledOnce = true;
             ctx.invalidate?.();
         });
     }
@@ -93,10 +129,12 @@ exports.isErr = isErr;
 // (never wrapped) with a dim › marker; because the summary is rightmost it
 // truncates first when a long title + summary overflow the terminal.
 function header(ctx, titledPrimary, annots) {
+    const g = glyph(ctx); // resolve first — stamps __runStart / enrolls in heartbeat
     const a = annots ? ` ${annots}` : "";
+    const elapsed = elapsedSeg(ctx); // dim `· 47s` while running >3s, else ""
     const summaryInner = ctx.state && ctx.state.__kitSummary;
     const summary = summaryInner ? `${dim(SEP)}${summaryInner}` : "";
-    return trunc(`${c.TOOL_RESULT_INDENT}${glyph(ctx)} ${titledPrimary}${a}${summary}`, c.termWidth(), `${c.FG_DIM}›${c.RST}`);
+    return trunc(`${c.TOOL_RESULT_INDENT}${g} ${titledPrimary}${a}${elapsed}${summary}`, c.termWidth(), `${c.FG_DIM}›${c.RST}`);
 }
 exports.header = header;
 // setSummary — stash a dim summary string on the SHARED ctx.state; kit.header

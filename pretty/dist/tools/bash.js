@@ -7,6 +7,7 @@ const helpers_js_1 = require("../helpers.js");
 const render_js_1 = require("../render.js");
 const tui_text_js_1 = require("../tui-text.js");
 const kit = require("../kit.js");
+const verdicts_js_1 = require("./verdicts.js");
 const metrics_js_1 = require("./metrics.js");
 function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
     const TC = (0, tui_text_js_1.resolveTextCtor)(TextComp);
@@ -43,6 +44,9 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
         }),
         renderCall(args, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
+            // Non-fold-eligible: break any open fold run so an adjacent read/grep
+            // before AND after this bash aren't coalesced across it (see runs.js).
+            require("../runs.js").breakRun();
             const text = ctx.lastComponent ?? new TC("", 0, 0);
             const tw = (0, config_js_1.termWidth)() || 80;
             const rawCmd = String(args.command ?? "");
@@ -70,12 +74,21 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
                 // Trust the reported exit code; no substring guessing (craft fix).
                 const isErr = ctx.isError || (d.exitCode !== null && d.exitCode !== 0);
                 const cleaned = (0, helpers_js_1.stripBashExitStatusLine)(d.text);
+                // Render by CONSEQUENCE: parse a semantic verdict from the tail
+                // (test/build totals) and promote it into the header. Null →
+                // behavior is UNCHANGED from today. (round-4 §3)
+                const verdict = (0, verdicts_js_1.extractVerdict)(cleaned, d.exitCode);
                 // TIER 2 — failure (ctx.isError OR nonzero exit) routes through the
                 // centralized kit.failLines: full body on BG_ERROR, default fg
                 // (bash output is not prose to paint red), exit code as a dim
                 // marker seg. Auto-full (no ctrl+o), tail-biased above 30 lines.
                 if (isErr) {
                     kit.markDone(ctx, true);
+                    // Header verdict on failure too: `✗ $ npm test · 3 failed`.
+                    // Body stays full/tail-biased (failures need context); the
+                    // "exit N" body marker below is left intact (additive).
+                    if (verdict)
+                        kit.setSummary(ctx, [verdict.seg, (0, kit.durationSeg)(result)]);
                     text.setText((0, kit.failLines)(cleaned, theme, {
                         fgError: false,
                         // Plain string: kit.marker dims the whole line already; a
@@ -92,6 +105,11 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
                 // licensed diff coloring (§1.3); line count / duration untouched.
                 const displayLines = colorizeDiffLines(cleaned.split("\n"));
                 const duration = (0, kit.durationSeg)(result); // "" when < 1s
+                // Success verdict → promote [verdict · duration] into the header.
+                // The header now answers "did it work / how long", so the tail
+                // window shrinks 5→2 below. Null verdict → header/body unchanged.
+                if (verdict)
+                    kit.setSummary(ctx, [verdict.seg, duration]);
                 const rw = (0, config_js_1.termWidth)();
                 const renderFn = (w) => {
                     // Success: inline ≤6; else tail-biased head 0 / tail 5 (test &
@@ -99,13 +117,15 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
                     // the tail. previewWindow supports head:0 (kit.js).
                     const win = ctx.expanded
                         ? (0, kit.previewWindow)(displayLines, { inlineMax: displayLines.length + 1 })
-                        : (0, kit.previewWindow)(displayLines, { inlineMax: 6, head: 0, tail: 5 });
+                        : (0, kit.previewWindow)(displayLines, { inlineMax: 6, head: 0, tail: verdict ? 2 : 5 });
                     const body = [];
                     for (const l of win.head)
                         body.push(`${kit.BODY_INDENT}${l}`);
                     const mk = (0, kit.marker)([
                         win.hidden > 0 ? `… +${(0, kit.plural)(win.hidden, "line")}` : "",
-                        duration,
+                        // Duration lives in the header once a verdict is promoted
+                        // there — don't repeat it in the body marker.
+                        verdict ? "" : duration,
                         win.hidden > 0 ? "ctrl+o" : "",
                     ]);
                     if (win.tail.length) {

@@ -4,6 +4,7 @@
 // reusing components, draining ctx.invalidate() passes until stable (or LOOP).
 const path = require("node:path");
 const DIST = path.join(__dirname, "pretty", "dist");
+const runs = require(path.join(DIST, "runs.js"));
 const CSI = { toolTitle: "\x1b[1m", error: "\x1b[31m", dim: "\x1b[2m", muted: "\x1b[2m", toolOutput: "", accent: "\x1b[34m", warning: "\x1b[33m", success: "\x1b[32m" };
 const theme = { fg: (k, s) => `${CSI[k] ?? ""}${s}\x1b[0m`, bold: (s) => `\x1b[1m${s}\x1b[0m`, bg: () => "", getBgAnsi: () => null };
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -32,6 +33,7 @@ async function drive(def, { args, result, expanded }, state, comps, width) {
   return { lines, passes, invals, loop: passes >= 25 };
 }
 async function show(title, def, scenario) {
+  runs.reset(); // each demo row is an independent transcript — no cross-scenario folding
   const state = {}, comps = {};
   let r;
   try { r = await drive(def, scenario, state, comps, 78); }
@@ -102,6 +104,11 @@ const PAL = {
 const DIFF_BG = ["\x1b[48;2;28;50;38m", "\x1b[48;2;58;34;34m", "\x1b[48;2;219;244;226m", "\x1b[48;2;250;222;222m"];
 const BOLD = "\x1b[1m";
 const GLYPH = new Set(["✓", "✗", "·"]); // ✓ ✗ ·
+// Liveness spinner frames (kit.glyph while status==="run") and the new cyan hue,
+// both palettes. A col-1 spinner frame is a valid running header glyph; cyan is
+// licensed ONLY when it wraps that running glyph.
+const SPIN = new Set([..."⠋⠙⠹⠸⠼⠴⠦⠧"]);
+const CYAN = { dark: "\x1b[38;2;100;170;180m", light: "\x1b[38;2;0;130;145m" };
 
 // §1.2 fixed-column glyph spine. After ANSI-strip: the first non-blank line is a
 // header (col 0 === " ", col 1 ∈ {✓,✗,·}); every other non-blank line is a body
@@ -112,7 +119,7 @@ function assertGlyphCol(lines) {
   lines.forEach((raw, i) => {
     const s = strip(raw);
     if (s.trim() === "") return; // blank lines are permitted anywhere
-    const isHeader = s[0] === " " && GLYPH.has(s[1]);
+    const isHeader = s[0] === " " && (GLYPH.has(s[1]) || SPIN.has(s[1])); // spinner is a live header glyph
     if (isHeader) { sawHeader = true; return; }
     if (s.slice(0, 3) !== "   ") bad.push(`L${i} body not at col3: ${JSON.stringify(s.slice(0, 6))}`);
   });
@@ -131,6 +138,12 @@ function assertColorBudget(lines) {
   lines.forEach((raw, i) => {
     const s = strip(raw);
     const isHeader = s[0] === " " && GLYPH.has(s[1]);
+    const isRunHeader = s[0] === " " && SPIN.has(s[1]); // running spinner glyph line
+    // Cyan is licensed ONLY as the running spinner glyph; anywhere else is off-budget.
+    for (const name of ["dark", "light"]) {
+      if (raw.includes(CYAN[name]) && !isRunHeader)
+        bad.push(`L${i} FG_CYAN(${name}) off-budget: ${JSON.stringify(s)}`);
+    }
     const hasDiffBg = DIFF_BG.some((bg) => raw.includes(bg));
     const body = s.replace(/^\s+/, "");
     const isDiffLine = /^[+-]/.test(body) || body.startsWith("@@") || body.startsWith("diff ");
@@ -257,15 +270,17 @@ function assertColorBudget(lines) {
     if (!rb.some((l) => /exit 2/.test(l))) V.notes.push("V2 bash 'exit 2' seg missing");
   }
 
-  // ---- V3 — bash tail: 193-line success, marker above tail, hidden=188. ----
+  // ---- V3 — bash tail: 193-line success, marker above tail, hidden=191.
+  // (round-4 verdicts: a success WITH an extracted verdict shrinks the tail
+  // 5→2, so 3 more lines are hidden — 188→191.) ----
   console.log("\n### V3 — bash tail (193-line success) ###");
   const v3 = await vtool("V3 bash 193", bash, { args: { command: "npm test" }, expanded: false, result: { content: [{ type: "text", text: bash193 }], details: { ...B(bash193, 0), __prettyElapsedMs: 8200 } } });
   {
     const s = v3.lines.map(strip);
-    const mkIdx = s.findIndex((l) => /188 lines/.test(l));
+    const mkIdx = s.findIndex((l) => /191 lines/.test(l));
     const tailIdx = s.findIndex((l) => /Tests 84 passed/.test(l));
     if (tailIdx < 0) V.notes.push("V3 verdict 'Tests 84 passed' not visible collapsed");
-    if (mkIdx < 0) V.notes.push("V3 hidden count (188) missing");
+    if (mkIdx < 0) V.notes.push("V3 hidden count (191) missing");
     if (mkIdx >= 0 && tailIdx >= 0 && mkIdx > tailIdx) V.notes.push("V3 marker not ABOVE tail");
   }
 

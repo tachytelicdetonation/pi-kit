@@ -8,6 +8,8 @@ const helpers_js_1 = require("../helpers.js");
 const render_js_1 = require("../render.js");
 const tui_text_js_1 = require("../tui-text.js");
 const kit = require("../kit.js");
+const runs = require("../runs.js");
+const node_path_1 = require("node:path");
 const metrics_js_1 = require("./metrics.js");
 function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
     const TC = (0, tui_text_js_1.resolveTextCtor)(TextComp);
@@ -43,6 +45,12 @@ function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
         }),
         renderCall(args, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
+            // Fold registry: consecutive reads of the SAME file collapse into the
+            // newest header (§1). A folded predecessor renders zero-height here
+            // (and in renderResult), which also drops the leading "\n" it prepends.
+            runs.register("read", (0, node_path_1.resolve)(cwd, String(args.path ?? "")), ctx);
+            if (ctx.state && ctx.state.__kitFolded && !ctx.expanded)
+                return kit.zeroText(ctx);
             const prev = ctx.lastComponent;
             const text = prev && !(prev instanceof kit.ZeroText) ? prev : new TC("", 0, 0);
             const err = (0, kit.isErr)(ctx);
@@ -53,6 +61,9 @@ function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
             return text;
         },
         renderResult(result, _opt, theme, ctx) {
+            // A folded predecessor is zero-height in the result pass too.
+            if (ctx.state && ctx.state.__kitFolded && !ctx.expanded)
+                return kit.zeroText(ctx);
             (0, config_js_1.resolveBaseBackground)(theme);
             const prev = ctx.lastComponent;
             const text = prev && !(prev instanceof kit.ZeroText) ? prev : new TC("", 0, 0);
@@ -85,7 +96,7 @@ function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
                 while (lines.length > 1 && lines[lines.length - 1] === "")
                     lines.pop(); // drop trailing newline's phantom line
                 const total = lines.length;
-                kit.setSummary(ctx, [(0, kit.plural)(total, "line"), kit.durationSeg(result)]);
+                kit.setSummary(ctx, [runs.runSeg(ctx), (0, kit.plural)(total, "line"), kit.durationSeg(result)]);
                 if (!ctx.expanded)
                     return kit.zeroText(ctx);
                 const tw = (0, config_js_1.termWidth)();

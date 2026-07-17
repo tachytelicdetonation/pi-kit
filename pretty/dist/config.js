@@ -27,12 +27,16 @@ exports.FG_RED = "\x1b[38;2;224;108;108m";
 exports.FG_YELLOW = "\x1b[38;2;214;180;90m";
 exports.FG_BLUE = "\x1b[38;2;110;150;230m";
 exports.FG_MUTED = "\x1b[38;2;139;148;158m";
+// Liveness hue — spinner + ticking elapsed while a call is `run`. Licensed for
+// LIVENESS ONLY (see assertColorBudget in preview.js); dies at completion.
+exports.FG_CYAN = "\x1b[38;2;100;170;180m";
 const PALETTE = {
     dark: {
         FG_LNUM: "\x1b[38;2;120;120;120m", FG_DIM: "\x1b[38;2;128;128;128m",
         FG_RULE: "\x1b[38;2;68;68;68m", FG_GREEN: "\x1b[38;2;126;186;148m",
         FG_RED: "\x1b[38;2;224;108;108m", FG_YELLOW: "\x1b[38;2;214;180;90m",
         FG_BLUE: "\x1b[38;2;110;150;230m", FG_MUTED: "\x1b[38;2;139;148;158m",
+        FG_CYAN: "\x1b[38;2;100;170;180m",
         BG_ADD: "\x1b[48;2;28;50;38m", BG_DEL: "\x1b[48;2;58;34;34m",
     },
     light: {
@@ -40,6 +44,7 @@ const PALETTE = {
         FG_RULE: "\x1b[38;2;190;190;190m", FG_GREEN: "\x1b[38;2;32;140;72m",
         FG_RED: "\x1b[38;2;190;44;44m", FG_YELLOW: "\x1b[38;2;150;110;20m",
         FG_BLUE: "\x1b[38;2;36;86;200m", FG_MUTED: "\x1b[38;2;90;100;110m",
+        FG_CYAN: "\x1b[38;2;0;130;145m",
         BG_ADD: "\x1b[48;2;219;244;226m", BG_DEL: "\x1b[48;2;250;222;222m",
     },
 };

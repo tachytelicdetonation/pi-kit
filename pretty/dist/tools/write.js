@@ -44,6 +44,9 @@ function registerWriteTool(pi, cwd, _svc, sdkTool, TextComp) {
         }),
         renderCall(args, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
+            // Non-fold-eligible: break any open fold run so adjacent read/grep
+            // calls aren't coalesced across this write (see runs.js breakRun).
+            require("../runs.js").breakRun();
             const a = args;
             const text = ctx.lastComponent ?? new TC("", 0, 0);
             const err = (0, kit.isErr)(ctx);

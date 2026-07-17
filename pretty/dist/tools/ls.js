@@ -7,6 +7,8 @@ const helpers_js_1 = require("../helpers.js");
 const render_js_1 = require("../render.js");
 const tui_text_js_1 = require("../tui-text.js");
 const kit = require("../kit.js");
+const runs = require("../runs.js");
+const node_path_1 = require("node:path");
 const metrics_js_1 = require("./metrics.js");
 function registerLsTool(pi, cwd, _fffService, sdkTool, TextComp) {
     const home = process.env.HOME ?? "";
@@ -30,6 +32,10 @@ function registerLsTool(pi, cwd, _fffService, sdkTool, TextComp) {
         }),
         renderCall(args, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
+            // Fold registry: consecutive ls of the SAME path collapse (§1).
+            runs.register("ls", (0, node_path_1.resolve)(cwd, String(args.path ?? ".")), ctx);
+            if (ctx.state && ctx.state.__kitFolded && !ctx.expanded)
+                return kit.zeroText(ctx);
             const prev = ctx.lastComponent;
             const text = prev && !(prev instanceof kit.ZeroText) ? prev : new TC("", 0, 0);
             const err = (0, kit.isErr)(ctx);
@@ -43,6 +49,8 @@ function registerLsTool(pi, cwd, _fffService, sdkTool, TextComp) {
             return text;
         },
         renderResult(result, _opt, theme, ctx) {
+            if (ctx.state && ctx.state.__kitFolded && !ctx.expanded)
+                return kit.zeroText(ctx);
             (0, config_js_1.resolveBaseBackground)(theme);
             const prev = ctx.lastComponent;
             const text = prev && !(prev instanceof kit.ZeroText) ? prev : new TC("", 0, 0);
@@ -64,7 +72,7 @@ function registerLsTool(pi, cwd, _fffService, sdkTool, TextComp) {
                 // shared ctx.state and render zero body lines. setSummary NEVER
                 // invalidates — the header repaints on markDone's existing microtask.
                 if (!ctx.expanded) {
-                    kit.setSummary(ctx, [entriesSeg, dirsSeg, duration]);
+                    kit.setSummary(ctx, [runs.runSeg(ctx), entriesSeg, dirsSeg, duration]);
                     return kit.zeroText(ctx);
                 }
                 // Tier 0 expanded (ctrl+o): full icon-free/blue-free column view at

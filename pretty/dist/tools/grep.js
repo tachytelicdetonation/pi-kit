@@ -7,6 +7,7 @@ const helpers_js_1 = require("../helpers.js");
 const render_js_1 = require("../render.js");
 const tui_text_js_1 = require("../tui-text.js");
 const kit = require("../kit.js");
+const runs = require("../runs.js");
 const metrics_js_1 = require("./metrics.js");
 function registerGrepTool(pi, cwd, _fffService, sdkTool, TextComp) {
     const T = (0, tui_text_js_1.resolveTextCtor)(TextComp);
@@ -39,6 +40,10 @@ function registerGrepTool(pi, cwd, _fffService, sdkTool, TextComp) {
         }),
         renderCall(args, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
+            // Fold registry: consecutive greps for the SAME term collapse (§1).
+            runs.register("grep", String(args.pattern ?? ""), ctx);
+            if (ctx.state && ctx.state.__kitFolded && !ctx.expanded)
+                return kit.zeroText(ctx);
             const prev = ctx.lastComponent;
             const text = prev && !(prev instanceof kit.ZeroText) ? prev : new T("", 0, 0);
             const err = (0, kit.isErr)(ctx);
@@ -59,6 +64,8 @@ function registerGrepTool(pi, cwd, _fffService, sdkTool, TextComp) {
             return text;
         },
         renderResult(result, _opt, theme, ctx) {
+            if (ctx.state && ctx.state.__kitFolded && !ctx.expanded)
+                return kit.zeroText(ctx);
             (0, config_js_1.resolveBaseBackground)(theme);
             const prev = ctx.lastComponent;
             const text = prev && !(prev instanceof kit.ZeroText) ? prev : new T("", 0, 0);
@@ -89,7 +96,7 @@ function registerGrepTool(pi, cwd, _fffService, sdkTool, TextComp) {
                         ? `${matches} in ${(0, kit.plural)(files, "file")}`
                         : `${matches} ${matches === 1 ? "match" : "matches"}`;
                     const topSeg = topFileSeg(stats.perFile);
-                    kit.setSummary(ctx, [countSeg, topSeg, duration]);
+                    kit.setSummary(ctx, [runs.runSeg(ctx), countSeg, topSeg, duration]);
                     return kit.zeroText(ctx);
                 }
                 // Tier 0 expanded → grouped body: pathSeg headers, gutterLine rows,

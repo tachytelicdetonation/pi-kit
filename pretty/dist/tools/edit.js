@@ -7,6 +7,8 @@ const helpers_js_1 = require("../helpers.js");
 const render_js_1 = require("../render.js");
 const tui_text_js_1 = require("../tui-text.js");
 const kit = require("../kit.js");
+const runs = require("../runs.js");
+const node_path_1 = require("node:path");
 const diff = require("../diff.js");
 const metrics_js_1 = require("./metrics.js");
 function getText(result) {
@@ -52,7 +54,11 @@ function registerEditTool(pi, cwd, _svc, sdkTool, TextComp) {
         renderCall(args, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
             const a = args;
-            const text = ctx.lastComponent ?? new TC("", 0, 0);
+            // Fold registry: consecutive edits of the SAME file collapse (§1).
+            runs.register("edit", (0, node_path_1.resolve)(cwd, String(a.filePath ?? a.path ?? "")), ctx);
+            if (ctx.state && ctx.state.__kitFolded && !ctx.expanded)
+                return kit.zeroText(ctx);
+            const text = ctx.lastComponent && !(ctx.lastComponent instanceof kit.ZeroText) ? ctx.lastComponent : new TC("", 0, 0);
             const err = (0, kit.isErr)(ctx);
             const p2 = (0, helpers_js_1.shortPath)(cwd, home, String(a.filePath ?? a.path ?? ""));
             const title = `${theme.fg(err ? "error" : "toolTitle", theme.bold("edit"))} ${kit.pathSeg(p2)}`;
@@ -60,8 +66,10 @@ function registerEditTool(pi, cwd, _svc, sdkTool, TextComp) {
             return text;
         },
         renderResult(result, _opt, theme, ctx) {
+            if (ctx.state && ctx.state.__kitFolded && !ctx.expanded)
+                return kit.zeroText(ctx);
             (0, config_js_1.resolveBaseBackground)(theme);
-            const text = ctx.lastComponent ?? new TC("", 0, 0);
+            const text = ctx.lastComponent && !(ctx.lastComponent instanceof kit.ZeroText) ? ctx.lastComponent : new TC("", 0, 0);
             if (ctx.isError) {
                 kit.markDone(ctx, true);
                 text.setText(kit.failLines(getText(result) || "Error", theme));
@@ -87,7 +95,7 @@ function registerEditTool(pi, cwd, _svc, sdkTool, TextComp) {
             const counts = `+${added} −${removed}`;
             const mk = ctx.expanded
                 ? (0, kit.marker)([(0, kit.plural)(hunks, "hunk"), counts, duration])
-                : (0, kit.marker)([`… ${(0, kit.plural)(hunks, "hunk")}`, counts, duration, "ctrl+o"]);
+                : (0, kit.marker)([runs.runSeg(ctx), `… ${(0, kit.plural)(hunks, "hunk")}`, counts, duration, "ctrl+o"]);
             const out = mk ? [...body, mk] : body;
             // Diff lines already carry their own bg fill; don't re-wrap them.
             text.setText(`${out.join("\n")}\n`);
