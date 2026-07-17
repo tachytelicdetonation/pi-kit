@@ -151,20 +151,29 @@ export async function isClaudeProcess(pid: number): Promise<boolean> {
   return command.length > 0 && CLAUDE_COMMAND.test(command);
 }
 
+// The session id always appears in a managed Claude's argv: cmux's `claude`
+// shim injects `--session-id <id>` on a fresh launch and cmux-client passes
+// `--resume <id>` on a restore (verified empirically). Require it as an actual
+// --session-id/--resume argument, not a bare substring, so a user-launched
+// `claude <prompt that mentions the id or a transcript path>` cannot match.
+function commandBindsSession(command: string, sessionId: string): boolean {
+  const escaped = sessionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`--(?:resume|session-id)[ =]${escaped}(?:\\s|$)`).test(command);
+}
+
 // Stronger identity than isClaudeProcess: the process is a Claude process AND its
-// command line carries this exact session id (cmux launches with `--session-id
-// <id>` and restores with `--resume <id>`, so the id is always present). Guards
-// SIGKILL and resume/failed decisions against PID reuse by an unrelated Claude.
+// command line binds this exact session id. Guards SIGKILL and resume/failed
+// decisions against PID reuse by an unrelated (or a different-session) Claude.
 export async function isManagedClaudeProcess(pid: number, sessionId: string | undefined): Promise<boolean> {
   const command = await processCommand(pid);
   if (!command || !CLAUDE_COMMAND.test(command)) return false;
-  return sessionId ? command.includes(sessionId) : true;
+  return sessionId ? commandBindsSession(command, sessionId) : true;
 }
 
-// Every live Claude PID whose command line references this session id. cmux can
-// spawn several `claude --resume <id>` instances for one session when the session
-// owned multiple restored surfaces after a restart; reconciliation uses this to
-// find duplicates that no run is tracking.
+// Every live Claude PID whose command line binds this session id. cmux can spawn
+// several `claude --resume <id>` instances for one session when the session owned
+// multiple restored surfaces after a restart; reconciliation and orphan cleanup
+// use this to find duplicates/respawns that no run's recorded pid points at.
 export async function findClaudePidsForSession(sessionId: string): Promise<number[]> {
   if (!sessionId) return [];
   const result = await runCommand("ps", ["-axo", "pid=,command="], { timeoutMs: 3_000 });
@@ -174,7 +183,7 @@ export async function findClaudePidsForSession(sessionId: string): Promise<numbe
     const match = line.match(/^\s*(\d+)\s+(.*)$/);
     if (!match) continue;
     const [, pidText, command] = match;
-    if (CLAUDE_COMMAND.test(command) && command.includes(sessionId)) {
+    if (CLAUDE_COMMAND.test(command) && commandBindsSession(command, sessionId)) {
       const pid = Number(pidText);
       if (Number.isSafeInteger(pid) && pid > 1) pids.push(pid);
     }

@@ -37,6 +37,12 @@ test("isManagedClaudeProcess additionally requires the session id in the command
   await withProc("python worker SIDTEST999", async (pid) => {
     assert.equal(await isManagedClaudeProcess(pid, "SIDTEST999"), false);
   });
+  // A real claude that merely MENTIONS the id in a prompt (not as --resume/
+  // --session-id) must not match — otherwise the duplicate sweep could SIGTERM
+  // an unrelated user session.
+  await withProc("claude tell me about SIDTEST999", async (pid) => {
+    assert.equal(await isManagedClaudeProcess(pid, "SIDTEST999"), false);
+  });
 });
 
 test("findClaudePidsForSession finds the claude process for a session, ignores others", async () => {

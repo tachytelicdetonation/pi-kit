@@ -393,26 +393,39 @@ export class ClaudeFleetManager {
       if (entry === this.options.instanceId) continue;
       const instanceDir = join(root, entry);
       const ownerPid = Number((await readFile(join(instanceDir, "owner.pid"), "utf8").catch(() => "")).trim());
-      if (ownerPid && isProcessAlive(ownerPid)) continue;
+      // Only sweep an instance whose owner is AFFIRMATIVELY dead. A missing or
+      // unreadable owner.pid (write failed, or an older extension version) must
+      // NOT trigger a sweep — that could SIGTERM a live peer's sessions.
+      if (!Number.isSafeInteger(ownerPid) || ownerPid <= 1 || isProcessAlive(ownerPid)) continue;
       const runs = await new StateStore(join(instanceDir, "state.json")).load().catch(() => []);
       for (const run of runs) {
-        if (["terminated", "failed", "exiting"].includes(run.state)) continue;
-        if (!run.pid || !(await isManagedClaudeProcess(run.pid, run.sessionId))) continue;
-        try {
-          process.kill(run.pid, "SIGTERM");
-        } catch {}
+        if (["terminated", "failed", "exiting"].includes(run.state) || !run.sessionId) continue;
+        // Kill by session-bound argv, not the recorded pid alone: if cmux
+        // restarted after the owner died it respawned `claude --resume <id>`
+        // under a new pid that the stale state file never captured.
+        const pids = await findClaudePidsForSession(run.sessionId);
+        if (pids.length === 0) continue;
+        for (const pid of pids) {
+          try {
+            process.kill(pid, "SIGTERM");
+          } catch {}
+        }
         if (run.workspaceId) await this.options.cmux.closeWorkspace(run.workspaceId).catch(() => {});
         await this.options.audit.append({
           event: "orphan.terminated",
           runId: run.runId,
           sessionId: run.sessionId,
-          data: { instance: entry, pid: run.pid, ownerPid: ownerPid || null },
+          data: { instance: entry, pids, ownerPid },
         });
       }
     }
   }
 
   async shutdown(cleanup: boolean): Promise<void> {
+    // A never-started holder (e.g. the bootstrap manager replaced on session_start)
+    // has no stack, no runs, and no owner file — skip teardown so it never writes
+    // an empty state.json into its instance dir.
+    if (!this.started && this.runs.size === 0) return;
     if (cleanup) await this.stopAll();
     this.broker?.stop();
     this.removeAckListener?.();
