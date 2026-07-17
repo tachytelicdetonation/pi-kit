@@ -13,11 +13,7 @@
  * whatever the host SDK search (fd/ripgrep) returns.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.__imageInternals = void 0;
 exports.default = piPrettyExtension;
-// Re-export for tests
-var image_js_1 = require("./image.js");
-Object.defineProperty(exports, "__imageInternals", { enumerable: true, get: function () { return image_js_1.__imageInternals; } });
 const bash_js_1 = require("./tools/bash.js");
 const find_js_1 = require("./tools/find.js");
 const grep_js_1 = require("./tools/grep.js");

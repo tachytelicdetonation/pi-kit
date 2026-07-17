@@ -1,8 +1,7 @@
 "use strict";
-/* pi-pretty: read tool -- file reading with syntax highlighting and inline image support. */
+/* pi-pretty: read tool -- file reading; images are rendered by the host. */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerReadTool = registerReadTool;
-const pi_tui_1 = require("@earendil-works/pi-tui");
 const config_js_1 = require("../config.js");
 const helpers_js_1 = require("../helpers.js");
 const render_js_1 = require("../render.js");
@@ -25,10 +24,14 @@ function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
             const result = (await sdkTool.execute(tid, p, sig, undefined, ctx));
             const imageBlock = result.content?.find((c) => c.type === "image");
             if (imageBlock) {
+                // Leave the image block in result.content untouched: the host's
+                // ToolExecutionComponent renders it as ONE pi-tui image (with proper
+                // image IDs / row accounting / redraw / deletion). We only tag it so
+                // renderResult shows an "image" summary — we do NOT copy the bytes or
+                // render our own image (that double-rendered against the host's).
                 result.details = {
                     _type: "readImage",
                     filePath: String(p.path ?? ""),
-                    data: imageBlock.data,
                     mimeType: imageBlock.mimeType ?? "image/png",
                 };
                 return result;
@@ -77,16 +80,15 @@ function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
             }
             kit.markDone(ctx, false);
             const d = result.details;
-            // Image rendering — use pi-tui Image component. Set an "image" summary
-            // first so the header still reads complete.
+            // Image read — render ONLY the header (with an "image" summary) and let
+            // the HOST append the single image from the preserved result.content.
+            // Rendering our own pi-tui Image here double-rendered (two component
+            // owners for one image); the older raw-sequence path bypassed pi-tui's
+            // image IDs / row accounting and broke proxy terminals (e.g. Herdr).
+            // Host-owned = exactly one image, correct redraw and deletion.
             if (d?._type === "readImage") {
                 kit.setSummary(ctx, ["image"]);
-                const mimeType = d.mimeType.startsWith("image/svg") ? "image/svg+xml" : d.mimeType;
-                return new pi_tui_1.Image(d.data, mimeType, {
-                    fallbackColor: (text) => theme.fg("toolTitle", text),
-                }, {
-                    filename: d.filePath,
-                });
+                return kit.zeroText(ctx);
             }
             // File content — Tier 0. Collapsed: fuse a line-count summary into the
             // header and render zero body lines. Expanded: plain (unhighlighted)
