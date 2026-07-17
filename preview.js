@@ -48,6 +48,8 @@ const read = grab(require(path.join(DIST, "tools/read.js")).registerReadTool);
 const grep = grab(require(path.join(DIST, "tools/grep.js")).registerGrepTool);
 const ls = grab(require(path.join(DIST, "tools/ls.js")).registerLsTool);
 const find = grab(require(path.join(DIST, "tools/find.js")).registerFindTool);
+const edit = grab(require(path.join(DIST, "tools/edit.js")).registerEditTool);
+const write = grab(require(path.join(DIST, "tools/write.js")).registerWriteTool);
 
 const B = (t, e) => ({ _type: "bashResult", text: t, exitCode: e, command: "" });
 const bigOut = Array.from({ length: 193 }, (_, i) => `line ${i + 1}`).join("\n");
@@ -60,6 +62,31 @@ const grepCtx = "src/a.ts:12:HIT one\nsrc/a.ts-13-  context after\nsrc/a.ts-11- 
 const lsText = "tools/\nrender/\nthemes/\nconfig.ts\nhelpers.ts\nimage.ts\nindex.ts\nexpand.ts\nkit.js\nbash.js\nread.js\ngrep.js\nfind.js\nls.js\nmetrics.js\nnotices.js\npackage.json\nREADME.md\ntsconfig.json\n.gitignore";
 const lsSmall = "tools/\nindex.ts\nREADME.md";
 const findText = [...Array.from({length:41},(_,i)=>`src/tools/t${i}.test.ts`),...Array.from({length:23},(_,i)=>`src/render/r${i}.test.ts`),...Array.from({length:19},(_,i)=>`test/e2e${i}.test.ts`)].join("\n");
+
+// edit small: a 3-line change to a tiny file.
+const editSmallOld = "export function add(a, b) {\n  return a + b;\n}\n";
+const editSmallNew = "export function add(a, b) {\n  // sum two numbers\n  return Number(a) + Number(b);\n}\n";
+// edit large: ~40-line file, two changes far apart -> two separated hunks.
+const editLargeOld = Array.from({ length: 40 }, (_, i) => `const line${i} = ${i} * 2; // row ${i}`).join("\n") + "\n";
+const editLargeNew = editLargeOld
+  .split("\n")
+  .map((l, i) => (i === 2 ? "const line2 = 2 * 4; // row 2 (edited)" : i === 36 ? "const line36 = 36 * 4; // row 36 (edited)" : l))
+  .join("\n");
+// write: a brand-new file.
+const writeContent = "import { readFile } from 'node:fs/promises';\n\nexport async function load(path) {\n  const raw = await readFile(path, 'utf8');\n  return JSON.parse(raw);\n}\n";
+// bash git-diff: a real unified diff to exercise the bash diff colorizer.
+const gitDiff = [
+  "diff --git a/src/add.ts b/src/add.ts",
+  "index 1a2b3c4..5d6e7f8 100644",
+  "--- a/src/add.ts",
+  "+++ b/src/add.ts",
+  "@@ -1,3 +1,4 @@",
+  " export function add(a, b) {",
+  "-  return a + b;",
+  "+  // sum two numbers",
+  "+  return Number(a) + Number(b);",
+  " }",
+].join("\n");
 
 (async () => {
   await show("bash small ok", bash, { args: { command: "git status" }, result: { content: [{ type: "text", text: "On branch main\nnothing to commit" }], details: { ...B("On branch main\nnothing to commit", 0), __prettyElapsedMs: 120 } } });
@@ -74,6 +101,14 @@ const findText = [...Array.from({length:41},(_,i)=>`src/tools/t${i}.test.ts`),..
   await show("ls big", ls, { args: { path: "src" }, result: { content: [{ type: "text", text: lsText }], details: { _type: "lsResult", text: lsText, path: "src", entryCount: 20 } } });
   await show("find", find, { args: { pattern: "*.test.ts" }, result: { content: [{ type: "text", text: findText }], details: { _type: "findResult", text: findText, pattern: "*.test.ts", matchCount: 83, notices: [] } } });
 
+  await show("edit small (collapsed)", edit, { args: { filePath: "src/add.ts", oldText: editSmallOld, newText: editSmallNew }, result: { content: [{ type: "text", text: "OK" }], details: { _type: "editResult", filePath: "src/add.ts", oldText: editSmallOld, newText: editSmallNew, __prettyElapsedMs: 40 } } });
+  await show("edit small (expanded)", edit, { args: { filePath: "src/add.ts", oldText: editSmallOld, newText: editSmallNew }, expanded: true, result: { content: [{ type: "text", text: "OK" }], details: { _type: "editResult", filePath: "src/add.ts", oldText: editSmallOld, newText: editSmallNew, __prettyElapsedMs: 40 } } });
+  await show("edit large 2-hunk (collapsed)", edit, { args: { filePath: "src/config.ts", oldText: editLargeOld, newText: editLargeNew }, result: { content: [{ type: "text", text: "OK" }], details: { _type: "editResult", filePath: "src/config.ts", oldText: editLargeOld, newText: editLargeNew, __prettyElapsedMs: 1400 } } });
+  await show("edit large 2-hunk (expanded)", edit, { args: { filePath: "src/config.ts", oldText: editLargeOld, newText: editLargeNew }, expanded: true, result: { content: [{ type: "text", text: "OK" }], details: { _type: "editResult", filePath: "src/config.ts", oldText: editLargeOld, newText: editLargeNew, __prettyElapsedMs: 1400 } } });
+  await show("write new file", write, { args: { filePath: "src/load.ts", content: writeContent }, result: { content: [{ type: "text", text: "OK" }], details: { _type: "writeResult", filePath: "src/load.ts", content: writeContent, __prettyElapsedMs: 60 } } });
+  await show("write new file (expanded)", write, { args: { filePath: "src/load.ts", content: writeContent }, expanded: true, result: { content: [{ type: "text", text: "OK" }], details: { _type: "writeResult", filePath: "src/load.ts", content: writeContent, __prettyElapsedMs: 60 } } });
+  await show("bash git-diff", bash, { args: { command: "git diff src/add.ts" }, result: { content: [{ type: "text", text: gitDiff }], details: { ...B(gitDiff, 0), __prettyElapsedMs: 90 } } });
+
   // Multi-pass: same read execution, collapse -> expand -> resize. Watch for LOOP.
   console.log("\n=== MULTI-PASS: read collapse->expand->resize ===");
   const st = {}, cm = {};
@@ -82,4 +117,13 @@ const findText = [...Array.from({length:41},(_,i)=>`src/tools/t${i}.test.ts`),..
   let r2 = await drive(read, { ...rs, expanded: true }, st, cm, 78); console.log(`expanded:  passes=${r2.passes} invals=${r2.invals} loop=${r2.loop}`);
   let r3 = await drive(read, { ...rs, expanded: true }, st, cm, 60); console.log(`resized60: passes=${r3.passes} invals=${r3.invals} loop=${r3.loop}`);
   let r4 = await drive(read, { ...rs, expanded: false }, st, cm, 78); console.log(`collapse2: passes=${r4.passes} invals=${r4.invals} loop=${r4.loop}`);
+
+  // Multi-pass: same edit execution, collapse -> expand -> resize -> collapse. Watch for LOOP.
+  console.log("\n=== MULTI-PASS: edit collapse->expand->resize ===");
+  const est = {}, ecm = {};
+  const es = { args: { filePath: "src/config.ts", oldText: editLargeOld, newText: editLargeNew }, result: { content: [{ type: "text", text: "OK" }], details: { _type: "editResult", filePath: "src/config.ts", oldText: editLargeOld, newText: editLargeNew, __prettyElapsedMs: 1400 } } };
+  let e1 = await drive(edit, { ...es, expanded: false }, est, ecm, 78); console.log(`collapsed: passes=${e1.passes} invals=${e1.invals} loop=${e1.loop}`);
+  let e2 = await drive(edit, { ...es, expanded: true }, est, ecm, 78); console.log(`expanded:  passes=${e2.passes} invals=${e2.invals} loop=${e2.loop}`);
+  let e3 = await drive(edit, { ...es, expanded: true }, est, ecm, 60); console.log(`resized60: passes=${e3.passes} invals=${e3.invals} loop=${e3.loop}`);
+  let e4 = await drive(edit, { ...es, expanded: false }, est, ecm, 78); console.log(`collapse2: passes=${e4.passes} invals=${e4.invals} loop=${e4.loop}`);
 })();

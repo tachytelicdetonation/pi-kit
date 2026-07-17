@@ -83,7 +83,7 @@ function registerGrepTool(pi, cwd, _fffService, sdkTool, TextComp) {
                 const SHOW_ALL_MAX = 8;
                 // Many matches, collapsed → per-file count strip (where they cluster).
                 if (!ctx.expanded && matches > SHOW_ALL_MAX) {
-                    const strip = (0, kit.grepFileStrip)(stats.perFile, Math.max(20, tw - 2), 6);
+                    const strip = grepFileStrip(stats.perFile, Math.max(20, tw - 2), 6);
                     const body = strip.map((l) => `${config_js_1.TOOL_RESULT_INDENT}${l}`);
                     const mk = (0, kit.marker)([`… ${countStr}`, duration, "ctrl+o"]);
                     if (mk)
@@ -112,7 +112,7 @@ function registerGrepTool(pi, cwd, _fffService, sdkTool, TextComp) {
                 const plain = d.text.split("\n").filter((l) => l.trim());
                 const plainShown = ctx.expanded ? plain : plain.slice(0, SHOW_ALL_MAX * 2);
                 text.setText((0, render_js_1.fillToolBackground)(withMarker(plainShown.map((l) => `${config_js_1.TOOL_RESULT_INDENT}${l}`))));
-                (0, render_js_1.renderGrepResults)(d.text, d.pattern, ctx.expanded ? Infinity : undefined)
+                renderGrepGrouped(d.text, d.pattern, ctx.expanded ? Infinity : undefined)
                     .then((rendered) => {
                     if (ctx.state.__seq !== seq)
                         return;
@@ -133,5 +133,65 @@ function registerGrepTool(pi, cwd, _fffService, sdkTool, TextComp) {
             return text;
         },
     });
+}
+// Collapsed per-file strip: top-N files "path (n)", column-packed. Path via
+// kit.pathSeg (dim dir + normal basename) so it matches the grouped headers.
+// Mirrors the former kit.grepFileStrip but styles the path through pathSeg.
+function grepFileStrip(perFile, width, topN = 6) {
+    const entries = [...perFile.entries()].sort((a, b) => b[1] - a[1]);
+    const cells = entries
+        .slice(0, topN)
+        .map(([file, n]) => `${kit.pathSeg(file)} ${config_js_1.FG_MUTED}(${n})${config_js_1.RST}`);
+    return kit.columns(cells, width, 3);
+}
+// Grouped, pattern-highlighted matches (async to fit the highlight guard, though
+// the work is synchronous). File headers render the path via kit.pathSeg and each
+// match/context row via kit.gutterLine so the line-number gutter aligns with read.js.
+// Context lines (rg "file-line-content") count toward the display limit exactly as
+// before; grepStats still owns the match total shown in the marker.
+async function renderGrepGrouped(text, pattern, limit = config_js_1.MAX_PREVIEW_LINES) {
+    const lines = (0, helpers_js_1.normalizeLineEndings)(text).split("\n");
+    if (!lines.length || (lines.length === 1 && !lines[0].trim()))
+        return `${config_js_1.FG_DIM}(no matches)${config_js_1.RST}`;
+    const out = [];
+    let currentFile = "";
+    let count = 0;
+    let re = null;
+    try {
+        re = new RegExp(`(${pattern})`, "gi");
+    }
+    catch {
+        /* skip highlighting */
+    }
+    for (const line of lines) {
+        if (count >= limit) {
+            out.push(`${config_js_1.TOOL_RESULT_INDENT}${config_js_1.FG_DIM}… more matches (ctrl+o)${config_js_1.RST}`);
+            break;
+        }
+        const fileMatch = line.match(/^(.+?)[:-](\d+)[:-](.*)$/);
+        if (fileMatch) {
+            const [, file, lineNo, content] = fileMatch;
+            if (file !== currentFile) {
+                if (currentFile)
+                    out.push("");
+                out.push(`${config_js_1.TOOL_RESULT_INDENT}${(0, config_js_1.fileIcon)(file)}${kit.pathSeg(file)}`);
+                currentFile = file;
+            }
+            const nw = Math.max(3, lineNo.length);
+            let display = content;
+            if (re)
+                display = content.replace(re, `${config_js_1.RST}${config_js_1.FG_YELLOW}\x1b[1m$1${config_js_1.RST}`);
+            out.push(kit.gutterLine(Number(lineNo), nw, display));
+            count++;
+        }
+        else if (line.trim() === "--") {
+            out.push(`${config_js_1.TOOL_RESULT_INDENT}${config_js_1.FG_DIM}  ···${config_js_1.RST}`);
+        }
+        else if (line.trim()) {
+            out.push(line);
+            count++;
+        }
+    }
+    return out.join("\n");
 }
 //# sourceMappingURL=grep.js.map

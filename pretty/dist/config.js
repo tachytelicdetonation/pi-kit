@@ -3,7 +3,7 @@
  * pi-pretty: ANSI codes, icons, theme, and environment config.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CACHE_LIMIT = exports.MAX_PREVIEW_LINES = exports.MAX_HL_CHARS = exports.NF_DEFAULT = exports.NF_DIR = exports.USE_ICONS = exports.BG_ERROR = exports.BG_BASE = exports.FG_MUTED = exports.FG_BLUE = exports.FG_YELLOW = exports.FG_RED = exports.FG_GREEN = exports.FG_RULE = exports.FG_DIM = exports.FG_LNUM = exports.RST = exports.TOOL_RESULT_INDENT = void 0;
+exports.CACHE_LIMIT = exports.MAX_PREVIEW_LINES = exports.MAX_HL_CHARS = exports.NF_DEFAULT = exports.NF_DIR = exports.USE_ICONS = exports.BG_DEL = exports.BG_ADD = exports.BG_ERROR = exports.BG_BASE = exports.FG_MUTED = exports.FG_BLUE = exports.FG_YELLOW = exports.FG_RED = exports.FG_GREEN = exports.FG_RULE = exports.FG_DIM = exports.FG_LNUM = exports.RST = exports.TOOL_RESULT_INDENT = void 0;
 exports.resolveBaseBackground = resolveBaseBackground;
 exports.termWidth = termWidth;
 exports.fileIcon = fileIcon;
@@ -36,12 +36,14 @@ const PALETTE = {
         FG_RULE: "\x1b[38;2;68;68;68m", FG_GREEN: "\x1b[38;2;126;186;148m",
         FG_RED: "\x1b[38;2;224;108;108m", FG_YELLOW: "\x1b[38;2;214;180;90m",
         FG_BLUE: "\x1b[38;2;110;150;230m", FG_MUTED: "\x1b[38;2;139;148;158m",
+        BG_ADD: "\x1b[48;2;28;50;38m", BG_DEL: "\x1b[48;2;58;34;34m",
     },
     light: {
         FG_LNUM: "\x1b[38;2;140;140;140m", FG_DIM: "\x1b[38;2;120;120;120m",
         FG_RULE: "\x1b[38;2;190;190;190m", FG_GREEN: "\x1b[38;2;32;140;72m",
         FG_RED: "\x1b[38;2;190;44;44m", FG_YELLOW: "\x1b[38;2;150;110;20m",
         FG_BLUE: "\x1b[38;2;36;86;200m", FG_MUTED: "\x1b[38;2;90;100;110m",
+        BG_ADD: "\x1b[48;2;219;244;226m", BG_DEL: "\x1b[48;2;250;222;222m",
     },
 };
 let _paletteIsDark = null;
@@ -56,6 +58,10 @@ exports.applyThemePalette = applyThemePalette;
 const BG_DEFAULT = "\x1b[49m";
 exports.BG_BASE = BG_DEFAULT;
 exports.BG_ERROR = BG_DEFAULT;
+// Diff add/del backgrounds — theme-swapped by applyThemePalette (dark set is the
+// default below; light variants live in PALETTE.light). Full 48;2 bg SGR strings.
+exports.BG_ADD = "\x1b[48;2;28;50;38m";
+exports.BG_DEL = "\x1b[48;2;58;34;34m";
 const ESC_RE = "\u001b";
 function parseAnsiRgb(ansi) {
     const m = ansi.match(new RegExp(`${ESC_RE}\\[(?:38|48);2;(\\d+);(\\d+);(\\d+)m`));

@@ -73,6 +73,10 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
                 const cleaned = (0, helpers_js_1.stripBashExitStatusLine)(d.text);
                 const output = isErr ? (0, helpers_js_1.compactErrorLines)(cleaned).join("\n") : cleaned;
                 const allLines = output.split("\n");
+                // Colorize diff-shaped output (+/- lines, @@ hunks, git headers)
+                // BEFORE windowing. Pure synchronous string coloring — line count,
+                // exit-code, duration, and error logic are untouched.
+                const displayLines = colorizeDiffLines(allLines);
                 const duration = (0, kit.durationSeg)(result); // "" when < 1s
                 const exitSeg = isErr && d.exitCode ? kit.redSeg(`exit ${d.exitCode}`) : "";
                 const rw = (0, config_js_1.termWidth)();
@@ -80,8 +84,8 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
                     // Success: inline ≤6, else head 4 / tail 2 (tail = test/build totals).
                     // Error: inline ≤8, else head 2 / tail 6 (stderr ends matter most).
                     const win = ctx.expanded
-                        ? (0, kit.previewWindow)(allLines, { inlineMax: allLines.length + 1 })
-                        : (0, kit.previewWindow)(allLines, isErr ? { inlineMax: 8, head: 2, tail: 6 } : { inlineMax: 6, head: 4, tail: 2 });
+                        ? (0, kit.previewWindow)(displayLines, { inlineMax: displayLines.length + 1 })
+                        : (0, kit.previewWindow)(displayLines, isErr ? { inlineMax: 8, head: 2, tail: 6 } : { inlineMax: 6, head: 4, tail: 2 });
                     const body = [];
                     for (const l of win.head)
                         body.push(`${config_js_1.TOOL_RESULT_INDENT}${l}`);
@@ -139,6 +143,43 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
             text.setText((0, render_js_1.fillToolBackground)(`${config_js_1.TOOL_RESULT_INDENT}${theme.fg("dim", fc && "text" in fc ? String(fc.text).slice(0, 120) : "done")}`));
             return text;
         },
+    });
+}
+// Detect diff-shaped output and colorize its content lines. Detection triggers on
+// any "@@ " hunk header, a "diff --git" line, or paired "--- "/"+++ " file headers.
+// When it doesn't look like a diff the lines are returned unchanged. Coloring is
+// width-safe (only wraps lines in FG_* SGR codes — no length change) and
+// theme-adaptive (FG_* are palette-swapped live by resolveBaseBackground). A +/-
+// prefix survives when truecolor degrades, so it stays readable without color.
+function colorizeDiffLines(lines) {
+    let isDiff = false;
+    let hasMinusHdr = false;
+    let hasPlusHdr = false;
+    for (const l of lines) {
+        if (l.startsWith("@@ ") || l.startsWith("diff --git")) {
+            isDiff = true;
+            break;
+        }
+        if (l.startsWith("--- "))
+            hasMinusHdr = true;
+        else if (l.startsWith("+++ "))
+            hasPlusHdr = true;
+    }
+    if (!isDiff && !(hasMinusHdr && hasPlusHdr))
+        return lines;
+    return lines.map((l) => {
+        // Headers first so "+++"/"---" aren't caught by the generic +/- branches.
+        if (l.startsWith("diff --git") ||
+            l.startsWith("index ") ||
+            l.startsWith("@@") ||
+            l.startsWith("+++") ||
+            l.startsWith("---"))
+            return `${config_js_1.FG_DIM}${l}${config_js_1.RST}`;
+        if (l.startsWith("+"))
+            return `${config_js_1.FG_GREEN}${l}${config_js_1.RST}`;
+        if (l.startsWith("-"))
+            return `${config_js_1.FG_RED}${l}${config_js_1.RST}`;
+        return l;
     });
 }
 function getText(result) {

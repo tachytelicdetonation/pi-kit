@@ -1,0 +1,194 @@
+{
+  "fixtureVersion": 1,
+  "oracleVersion": "2.1.212",
+  "observationDate": "2026-07-17",
+  "cleanRoom": true,
+  "normalization": {
+    "removed": ["ids", "timestamps", "absolutePaths", "tokenTotals", "costs", "credentials", "rawTranscripts"],
+    "preserved": ["inputs", "stateTransitions", "optionSchemas", "errorCategories"]
+  },
+  "contracts": [
+    {
+      "id": "INV-01",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["script", "scriptPath", "name", "missing-source", "scriptPath-over-script-over-name"],
+      "expectedErrorCategories": ["INVALID_INVOCATION"]
+    },
+    {
+      "id": "INV-02",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["object", "array", "scalar", "null", "omitted"],
+      "expectedStateTransitions": ["pending", "running", "completed"]
+    },
+    {
+      "id": "TRG-01",
+      "oracleVersion": "2.1.212",
+      "provenance": ["black-box"],
+      "inputs": ["interactive", "print", "rpc", "extension"],
+      "expectedStateTransitions": ["inactive", "armed", "inactive"]
+    },
+    {
+      "id": "TRG-02",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["direct-natural-language-request"],
+      "expectedStateTransitions": ["tool-available"]
+    },
+    {
+      "id": "EFF-01",
+      "oracleVersion": "2.1.212",
+      "provenance": ["black-box"],
+      "inputs": ["ultracode", "fresh-session"],
+      "expectedStateTransitions": ["configured-default", "xhigh", "configured-default"]
+    },
+    {
+      "id": "EFF-02",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["trivial", "single-file", "broad-audit", "migration", "adversarial-review", "multi-stage"],
+      "expectedStateTransitions": ["model-decision"]
+    },
+    {
+      "id": "APP-01",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["once", "always", "view-script", "edit-prompt", "deny"],
+      "expectedStateTransitions": ["pending", "approval-required", "approved-or-denied"]
+    },
+    {
+      "id": "APP-02",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["auto-first-launch", "auto-approved", "ultracode"],
+      "expectedStateTransitions": ["approval-required", "approved"]
+    },
+    {
+      "id": "APP-03",
+      "oracleVersion": "2.1.212",
+      "provenance": ["black-box"],
+      "inputs": ["print", "json", "bypass"],
+      "expectedStateTransitions": ["headless"]
+    },
+    {
+      "id": "AGT-01",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["read", "edit", "write", "bash", "web", "mcp", "custom"],
+      "expectedErrorCategories": ["TOOL_NOT_ALLOWED", "PERMISSION_DENIED"]
+    },
+    {
+      "id": "AGT-02",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "optionSchema": ["label", "phase", "schema", "model", "effort", "isolation", "agentType"],
+      "expectedStateTransitions": ["journal-hash-invalidated"]
+    },
+    {
+      "id": "RUN-01",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["global-snapshot"],
+      "expectedStateTransitions": ["sandbox-created"]
+    },
+    {
+      "id": "RUN-02",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["filesystem", "shell", "network", "import", "mid-run-input"],
+      "expectedErrorCategories": ["CAPABILITY_UNAVAILABLE", "IMPORT_DISABLED"]
+    },
+    {
+      "id": "RUN-03",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["concurrency-16", "concurrency-17", "agents-1000", "agents-1001"],
+      "expectedErrorCategories": ["CONCURRENCY_LIMIT", "AGENT_LIMIT"]
+    },
+    {
+      "id": "RUN-04",
+      "oracleVersion": "2.1.212",
+      "provenance": ["black-box"],
+      "inputs": ["Function", "constructor-chain", "dynamic-import", "wasm", "host-object"],
+      "expectedErrorCategories": ["CODE_GENERATION_DISABLED", "SANDBOX_VIOLATION"]
+    },
+    {
+      "id": "RES-01",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["completed-agent", "in-flight-agent"],
+      "expectedStateTransitions": ["running", "paused", "pending", "running", "completed"]
+    },
+    {
+      "id": "RES-02",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["insert", "delete", "reorder", "prompt", "option", "schema", "agent-definition"],
+      "expectedStateTransitions": ["prefix-replayed", "suffix-rerun"]
+    },
+    {
+      "id": "RES-03",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["completed-source", "edited-script"],
+      "expectedStateTransitions": ["completed", "pending", "running", "completed"]
+    },
+    {
+      "id": "RES-04",
+      "oracleVersion": "2.1.212",
+      "provenance": ["black-box", "Pi-specific"],
+      "inputs": ["same-session", "new-session", "pi-cross-session-extension"],
+      "expectedErrorCategories": ["RESUME_SCOPE_MISMATCH"]
+    },
+    {
+      "id": "SAV-01",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box", "Pi-specific"],
+      "inputs": ["project-js", "user-js", "collision", "invalid-file"],
+      "expectedErrorCategories": ["INVALID_SAVED_WORKFLOW"]
+    },
+    {
+      "id": "SAV-02",
+      "oracleVersion": "2.1.212",
+      "provenance": ["black-box", "Pi-specific"],
+      "inputs": ["repository-root", "nested-cwd", "nearest-project-directory"],
+      "expectedStateTransitions": ["nearest-definition-selected"]
+    },
+    {
+      "id": "UI-01",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["run", "phase", "agent", "filter", "pause", "resume", "stop-agent", "restart-agent", "save"],
+      "expectedStateTransitions": ["runs", "phases", "agents", "agent-detail"]
+    },
+    {
+      "id": "UI-02",
+      "oracleVersion": "2.1.212",
+      "provenance": ["black-box"],
+      "inputs": ["agents-25", "agents-26", "tokens-1500000", "tokens-1500001", "ultracode"],
+      "expectedStateTransitions": ["no-warning", "warning"]
+    },
+    {
+      "id": "DRS-01",
+      "oracleVersion": "2.1.212",
+      "provenance": ["black-box"],
+      "inputs": ["deep-research"],
+      "expectedStateTransitions": ["pending", "running", "paused", "running", "completed", "delivered"]
+    },
+    {
+      "id": "DRS-02",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box"],
+      "inputs": ["supporting-source", "refuting-source", "unavailable-source", "tool-failure", "rate-limit"],
+      "expectedStateTransitions": ["supported", "refuted", "unverified"]
+    },
+    {
+      "id": "DIS-01",
+      "oracleVersion": "2.1.212",
+      "provenance": ["official-doc", "black-box", "Pi-specific"],
+      "inputs": ["user-setting", "environment", "managed-setting"],
+      "expectedStateTransitions": ["enabled", "disabled"]
+    }
+  ]
+}

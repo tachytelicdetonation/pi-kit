@@ -23,6 +23,8 @@ const find_js_1 = require("./tools/find.js");
 const grep_js_1 = require("./tools/grep.js");
 const ls_js_1 = require("./tools/ls.js");
 const read_js_1 = require("./tools/read.js");
+const edit_js_1 = require("./tools/edit.js");
+const write_js_1 = require("./tools/write.js");
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -54,6 +56,8 @@ async function piPrettyExtension(pi, deps) {
     let createLsTool = sdk.createLsTool ?? sdk.createLsToolDefinition;
     let createFindTool = sdk.createFindTool ?? sdk.createFindToolDefinition;
     let createGrepTool = sdk.createGrepTool ?? sdk.createGrepToolDefinition;
+    let createEditTool = sdk.createEditTool ?? sdk.createEditToolDefinition;
+    let createWriteTool = sdk.createWriteTool ?? sdk.createWriteToolDefinition;
     if (!deps) {
         try {
             // Dynamic import() uses ESM resolution (not CJS interop), so it
@@ -66,6 +70,8 @@ async function piPrettyExtension(pi, deps) {
             createLsTool = sdk.createLsToolDefinition ?? sdk.createLsTool;
             createFindTool = sdk.createFindToolDefinition ?? sdk.createFindTool;
             createGrepTool = sdk.createGrepToolDefinition ?? sdk.createGrepTool;
+            createEditTool = sdk.createEditToolDefinition ?? sdk.createEditTool;
+            createWriteTool = sdk.createWriteToolDefinition ?? sdk.createWriteTool;
         }
         catch {
             createReadTool = undefined;
@@ -73,6 +79,8 @@ async function piPrettyExtension(pi, deps) {
             createLsTool = undefined;
             createFindTool = undefined;
             createGrepTool = undefined;
+            createEditTool = undefined;
+            createWriteTool = undefined;
         }
     }
     // ------------------------------------------------------------------
@@ -92,6 +100,12 @@ async function piPrettyExtension(pi, deps) {
     }
     if (isToolEnabled("grep") && createGrepTool) {
         (0, grep_js_1.registerGrepTool)(pi, cwd, null, createGrepTool(cwd), TextComp);
+    }
+    if (isToolEnabled("edit") && createEditTool) {
+        (0, edit_js_1.registerEditTool)(pi, cwd, null, createEditTool(cwd), TextComp);
+    }
+    if (isToolEnabled("write") && createWriteTool) {
+        (0, write_js_1.registerWriteTool)(pi, cwd, null, createWriteTool(cwd), TextComp);
     }
     // Fallback padding for SDK-rendered tool bodies. The SDK reads
     // result.content[0].text and slices collapsed output to roughly the first

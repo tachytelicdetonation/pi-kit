@@ -85,12 +85,58 @@ const plural = (n, unit) => `${n} ${unit}${n === 1 ? "" : "s"}`;
 const dim = (s) => `${c.FG_DIM}${s}${c.RST}`;
 // A colored marker segment that returns to dim afterwards (so joinDim keeps flowing).
 const redSeg = (s) => `${c.RST}${c.FG_RED}${s}${c.RST}${c.FG_DIM}`;
+const greenSeg = (s) => `${c.RST}${c.FG_GREEN}${s}${c.RST}${c.FG_DIM}`;
 const warnSeg = (s) => `${c.RST}${c.FG_YELLOW}${s}${c.RST}${c.FG_DIM}`;
 exports.SEP = SEP;
 exports.plural = plural;
 exports.dim = dim;
 exports.redSeg = redSeg;
+exports.greenSeg = greenSeg;
 exports.warnSeg = warnSeg;
+
+// --- path segment: dim dirname + normal basename -------------------------
+// Renders "dir/" dimmed (FG_DIM) followed by the basename in the default weight/
+// color. With a `budget` (column width), the MIDDLE of the dirname is elided —
+// leading segment + "…/" + trailing dir — so the basename is never truncated.
+// Width math is column-aware (vis/trunc), never string .length.
+function truncMidDir(dir, budget) {
+    // dir keeps its trailing "/". Preserve a leading "/" for absolute paths.
+    const lead = dir.startsWith("/") ? "/" : "";
+    const segs = (lead ? dir.slice(1) : dir).split("/").filter(Boolean);
+    if (segs.length <= 1)
+        return trunc(dir, Math.max(1, budget)); // nothing to elide in the middle
+    const first = segs[0];
+    const last = segs[segs.length - 1];
+    let out = `${lead}${first}/…/${last}/`;
+    if (vis(out) <= budget)
+        return out;
+    out = `…/${last}/`; // drop the leading segment too
+    if (vis(out) <= budget)
+        return out;
+    return trunc(out, Math.max(1, budget)); // last resort: hard clip
+}
+function pathSeg(path, budget) {
+    const p = String(path ?? "");
+    const slash = p.lastIndexOf("/");
+    const base = slash >= 0 ? p.slice(slash + 1) : p;
+    let dir = slash >= 0 ? p.slice(0, slash + 1) : ""; // trailing slash kept
+    if (budget && dir && vis(dir) + vis(base) > budget) {
+        dir = truncMidDir(dir, Math.max(0, budget - vis(base)));
+    }
+    return dir ? `${c.FG_DIM}${dir}${c.RST}${base}` : base;
+}
+exports.pathSeg = pathSeg;
+
+// --- gutter line: right-aligned line number │ code -----------------------
+// The shared line-numbered content row (read/grep/diff render through this).
+// `no` is the line number, `nw` the number field width, `code` the styled body.
+// Mirrors the gutter idiom inlined in tools/read.js. No trailing newline.
+function gutterLine(no, nw, code) {
+    const s = String(no);
+    const pad = " ".repeat(Math.max(0, nw - s.length));
+    return `${c.TOOL_RESULT_INDENT}${c.FG_LNUM}${pad}${s}${c.RST} ${c.FG_RULE}│${c.RST} ${code}${c.RST}`;
+}
+exports.gutterLine = gutterLine;
 
 // --- the fused marker line ----------------------------------------------
 // segs: plain (dimmed) or pre-colored (redSeg/warnSeg) strings; empties dropped.

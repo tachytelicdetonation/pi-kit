@@ -47,7 +47,7 @@ function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
             const err = (0, kit.isErr)(ctx);
             const p2 = (0, helpers_js_1.shortPath)(cwd, home, String(args.path ?? ""));
             const off = typeof args.offset === "number" && args.offset > 0 ? `:${args.offset}` : "";
-            const title = `${theme.fg(err ? "error" : "toolTitle", theme.bold("read"))} ${theme.fg("toolTitle", p2)}${theme.fg("dim", off)}`;
+            const title = `${theme.fg(err ? "error" : "toolTitle", theme.bold("read"))} ${kit.pathSeg(p2)}${theme.fg("dim", off)}`;
             text.setText((0, render_js_1.fillToolBackground)(`\n${kit.header(ctx, title)}`, err ? config_js_1.BG_ERROR : config_js_1.BG_BASE));
             return text;
         },
@@ -85,11 +85,7 @@ function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
                 const offset = d.offset || 0;
                 const nw = Math.max(3, String(offset + total).length);
                 const cw = Math.max(8, tw - nw - 3 - config_js_1.TOOL_RESULT_INDENT.length);
-                const gutter = (i, code) => {
-                    const no = String(offset + i + 1);
-                    const padNo = " ".repeat(Math.max(0, nw - no.length));
-                    return `${config_js_1.TOOL_RESULT_INDENT}${config_js_1.FG_LNUM}${padNo}${no}${config_js_1.RST} ${config_js_1.FG_RULE}│${config_js_1.RST} ${code}${config_js_1.RST}`;
-                };
+                const gutter = (i, code) => kit.gutterLine(offset + i + 1, nw, code);
                 // Zero-chrome: a fully-shown small file gets no marker; expanded shows size.
                 const markerLine = () => (hidden > 0 || ctx.expanded)
                     ? (0, kit.marker)([
