@@ -349,11 +349,6 @@ export class WorkflowManager extends EventEmitter {
     const resolvedAgentTimeoutMs = agentTimeoutMs !== undefined ? agentTimeoutMs : this.defaultAgentTimeoutMs;
     const resolvedConcurrency = concurrency ?? this.concurrency;
     const resolvedAgentRetries = agentRetries ?? this.defaultAgentRetries;
-    // Surface the run's token budget on the snapshot so the live panel/transcript can
-    // render `spent / budget tok`. Set once at run start — the total never changes.
-    if (typeof tokenBudget === "number" && tokenBudget > 0) {
-      managed.snapshot.tokenBudget = tokenBudget;
-    }
     const progress = () => onProgress?.(managed.snapshot);
     // Let a host abort (e.g. Esc during a blocking tool call) cancel this run.
     if (externalSignal) {

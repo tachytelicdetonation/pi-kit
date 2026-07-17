@@ -53,12 +53,6 @@ export interface WorkflowSnapshot {
   runId?: string;
   /** checkpoint() gates auto-approved headlessly so far (no human was asked). */
   autoCheckpointCount?: number;
-  /**
-   * The run's total token budget (the number runWorkflow was given), in tokens;
-   * undefined when the run has no budget. In-memory liveness only (not persisted),
-   * set once at run start — lets the default surfaces render `spent / budget tok`.
-   */
-  tokenBudget?: number;
 }
 
 export interface WorkflowDisplay {
@@ -138,28 +132,6 @@ export function fmtTokenCount(fresh: number, cacheRead: number, fmt: (n: number)
  */
 export function fmtTokenSegment(figures: { fresh: number; cacheRead: number }, fmt: (n: number) => string): string {
   return figures.fresh + figures.cacheRead > 0 ? fmtTokenCount(figures.fresh, figures.cacheRead, fmt) : "";
-}
-
-/**
- * Like {@link fmtTokenSegment}, but shows spend against a run's token budget when
- * one is set: "84K / 200K tok" instead of the plain "84K tok". The spent figure is
- * the same fresh+cacheRead sum the plain segment shows (rolled into one number so
- * it reads as "spent vs budget"), and the denominator uses the same `fmt`. Returns
- * `warn: true` at ≥80% of budget so the caller can color the segment. With no
- * budget (undefined/≤0) this is exactly {@link fmtTokenSegment} — the no-budget
- * surfaces render byte-identically to before.
- */
-export function fmtTokenBudgetSegment(
-  figures: { fresh: number; cacheRead: number },
-  fmt: (n: number) => string,
-  budget?: number,
-): { text: string; warn: boolean } {
-  if (!budget || budget <= 0) return { text: fmtTokenSegment(figures, fmt), warn: false };
-  const spent = figures.fresh + figures.cacheRead;
-  // Keep the existing zero-guard: omit the segment until spend is known, so a
-  // just-started run reads like today rather than showing a bare "0 / 200K tok".
-  if (spent <= 0) return { text: "", warn: false };
-  return { text: `${fmt(spent) || "0"} / ${fmt(budget)} tok`, warn: spent / budget >= 0.8 };
 }
 
 /**
@@ -350,9 +322,8 @@ export function renderWorkflowLines(
   // Build header with token info (and cost when the provider reports it)
   const usage = snapshot.tokenUsage;
   const costInfo = usage?.cost ? ` · ${fmtCost(usage.cost)}` : "";
-  const { text: segment, warn } = fmtTokenBudgetSegment(tokenFigures(usage), fmtFull, snapshot.tokenBudget);
-  const styledSegment = warn ? theme.fg("warning", segment) : segment;
-  const tokenInfo = `${segment ? ` · ${styledSegment}` : ""}${costInfo}`;
+  const segment = fmtTokenSegment(tokenFigures(usage), fmtFull);
+  const tokenInfo = `${segment ? ` · ${segment}` : ""}${costInfo}`;
   // Wall-clock elapsed, derived from the earliest agent start (the snapshot has no
   // run-start stamp of its own). Omitted until at least one agent has started.
   const start = earliestAgentStart(snapshot.agents);

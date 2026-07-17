@@ -13,7 +13,6 @@ import {
   aggregateAgentUsage,
   fmtCost,
   fmtDuration,
-  fmtTokenBudgetSegment,
   fmtTokenSegment,
   shorten,
   statusIcon,
@@ -335,14 +334,11 @@ export function renderPanel(
     // persisted update) — the compact answer to "is it stuck?".
     const lastActivity = activity.get(r.runId) ?? Date.parse(r.updatedAt);
     const autoCheckpoints = live?.snapshot.autoCheckpointCount ?? 0;
-    // Spend vs the run's token budget when one is set; warning-colored at ≥80%.
-    const budgetSeg = fmtTokenBudgetSegment(usage, fmtTokensShort, live?.snapshot.tokenBudget);
-    const tokenCell = budgetSeg.warn ? theme.fg("warning", budgetSeg.text) : budgetSeg.text;
     const meta = [
       `${done}/${agents.length} agents`,
       live?.snapshot.currentPhase || "",
       elapsed,
-      tokenCell,
+      fmtTokenSegment(usage, fmtTokensShort),
       usage.cost > 0 ? fmtCost(usage.cost) : "",
       autoCheckpoints > 0 ? `⚠${autoCheckpoints} auto-checkpoint${autoCheckpoints > 1 ? "s" : ""}` : "",
       Number.isFinite(lastActivity) ? `updated ${fmtAgo(now, lastActivity)}` : "",
