@@ -1,0 +1,25 @@
+{
+  "name": "pi-kit-pretty",
+  "version": "0.6.17-kit.1",
+  "private": true,
+  "description": "Pretty terminal output for Pi — vendored fork of @heyhuynhgiabuu/pi-pretty with the pi-tui require-resolution fix (see README).",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "files": [
+    "dist/"
+  ],
+  "dependencies": {
+    "@ff-labs/fff-node": "^0.9.6",
+    "@shikijs/cli": "^4.0.2",
+    "typebox": "1.1.38"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.0",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  }
+}
