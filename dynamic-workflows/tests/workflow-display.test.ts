@@ -248,6 +248,65 @@ describe("renderWorkflowText", () => {
     assert.ok(!/\b0 tok/.test(text), `an all-zero aggregate must not render "0 tok"; got: ${text}`);
   });
 
+  it("renders spend against the token budget when one is set", async () => {
+    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
+    const snap = createWorkflowSnapshot(fakeMeta());
+    snap.tokenBudget = 200_000;
+    snap.tokenUsage = { input: 84_000, output: 0, total: 84_000 };
+    const text = renderWorkflowLines(snap).join("\n");
+    assert.ok(
+      text.includes(`${(84_000).toLocaleString()} / ${(200_000).toLocaleString()} tok`),
+      `header should show spent / budget; got: ${text}`,
+    );
+  });
+
+  it("warning-colors the budget segment at ≥80% of budget", async () => {
+    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
+    const snap = createWorkflowSnapshot(fakeMeta());
+    snap.tokenBudget = 200_000;
+    snap.tokenUsage = { input: 170_000, output: 0, total: 170_000 }; // 85% of budget
+    const roles: string[] = [];
+    const theme = {
+      fg: (c: string, t: string) => {
+        roles.push(c);
+        return t;
+      },
+      bold: (t: string) => t,
+    };
+    const text = renderWorkflowLines(snap, {}, theme).join("\n");
+    assert.ok(roles.includes("warning"), `≥80% budget should be warning-styled; roles seen: ${roles.join(",")}`);
+    assert.ok(
+      text.includes(`${(170_000).toLocaleString()} / ${(200_000).toLocaleString()} tok`),
+      `header should still show spent / budget; got: ${text}`,
+    );
+  });
+
+  it("stays dim (no warning) below 80% of budget", async () => {
+    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
+    const snap = createWorkflowSnapshot(fakeMeta());
+    snap.tokenBudget = 200_000;
+    snap.tokenUsage = { input: 84_000, output: 0, total: 84_000 }; // 42% of budget
+    const roles: string[] = [];
+    const theme = {
+      fg: (c: string, t: string) => {
+        roles.push(c);
+        return t;
+      },
+      bold: (t: string) => t,
+    };
+    renderWorkflowLines(snap, {}, theme);
+    assert.ok(!roles.includes("warning"), `below 80% must not be warning-styled; roles seen: ${roles.join(",")}`);
+  });
+
+  it("renders the plain `tok` segment (unchanged) when no budget is set", async () => {
+    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
+    const snap = createWorkflowSnapshot(fakeMeta());
+    snap.tokenUsage = { input: 84_000, output: 0, total: 84_000 };
+    const text = renderWorkflowLines(snap).join("\n");
+    assert.ok(text.includes(`${(84_000).toLocaleString()} tok`), `should show plain tok; got: ${text}`);
+    assert.ok(!text.includes(" / "), `no-budget header must not show a denominator; got: ${text}`);
+  });
+
   it("fmtCost never renders a real cost as a zero-looking figure", async () => {
     const { fmtCost } = await loadDisplay();
     assert.equal(fmtCost(6.7), "$6.70");

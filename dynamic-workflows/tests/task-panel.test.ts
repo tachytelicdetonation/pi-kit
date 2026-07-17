@@ -679,6 +679,63 @@ describe("renderPanel", () => {
       "healthy run must not render a failed line",
     );
   });
+
+  it("renders spend against the token budget in the panel row when a budget is set", async () => {
+    const { renderPanel } = await import("../src/task-panel.js");
+    const agents = [{ status: "done", tokenUsage: { input: 84_000, output: 0, total: 84_000 } }];
+    const manager = {
+      listRuns: () => [{ runId: "a", workflowName: "audit", status: "running", agents, logs: [] }],
+      getRun: (id: string) => (id === "a" ? { snapshot: { agents, tokenBudget: 200_000 } } : undefined),
+    };
+    const lines = renderPanel(manager as never, theme as never);
+    const row = lines.find((l) => l.includes("audit")) ?? "";
+    assert.ok(row.includes("84.0K / 200.0K tok"), `panel row should show spent / budget; got: ${row}`);
+  });
+
+  it("warning-colors the panel budget segment at ≥80% and stays plain below", async () => {
+    const { renderPanel } = await import("../src/task-panel.js");
+    const mk = (input: number) => {
+      const agents = [{ status: "done", tokenUsage: { input, output: 0, total: input } }];
+      return {
+        listRuns: () => [{ runId: "a", workflowName: "audit", status: "running", agents, logs: [] }],
+        getRun: (id: string) => (id === "a" ? { snapshot: { agents, tokenBudget: 200_000 } } : undefined),
+      };
+    };
+    // ≥80%: warning role recorded.
+    const hotRoles: string[] = [];
+    const hotTheme = {
+      fg: (c: string, t: string) => {
+        hotRoles.push(c);
+        return t;
+      },
+      bold: (t: string) => t,
+    };
+    renderPanel(mk(170_000) as never, hotTheme as never); // 85%
+    assert.ok(hotRoles.includes("warning"), `≥80% panel budget should be warning-styled; roles: ${hotRoles.join(",")}`);
+    // <80%: no warning role.
+    const coldRoles: string[] = [];
+    const coldTheme = {
+      fg: (c: string, t: string) => {
+        coldRoles.push(c);
+        return t;
+      },
+      bold: (t: string) => t,
+    };
+    renderPanel(mk(84_000) as never, coldTheme as never); // 42%
+    assert.ok(!coldRoles.includes("warning"), `below 80% must not be warning-styled; roles: ${coldRoles.join(",")}`);
+  });
+
+  it("renders the plain `tok` panel segment (unchanged) when no budget is set", async () => {
+    const { renderPanel } = await import("../src/task-panel.js");
+    const agents = [{ status: "done", tokenUsage: { input: 84_000, output: 0, total: 84_000 } }];
+    const manager = {
+      listRuns: () => [{ runId: "a", workflowName: "audit", status: "running", agents, logs: [] }],
+      getRun: (id: string) => (id === "a" ? { snapshot: { agents } } : undefined),
+    };
+    const row = renderPanel(manager as never, theme as never).find((l) => l.includes("audit")) ?? "";
+    assert.ok(row.includes("84.0K tok"), `should show plain tok; got: ${row}`);
+    assert.ok(!row.includes(" / "), `no-budget panel row must not show a denominator; got: ${row}`);
+  });
 });
 
 // ─── per-agent stall flag ────────────────────────────────────────────────────────
