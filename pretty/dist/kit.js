@@ -12,6 +12,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const c = require("./config.js");
 const h = require("./helpers.js");
 const tui = require("@earendil-works/pi-tui"); // top-level require — jiti-aliased (see tui-text.js)
+// Re-export the zero-height result component (defined in tui-text.js per §1.1's
+// exact signatures) so tools can call kit.zeroText(ctx) as the tiering pseudocode
+// writes it. No require cycle: tui-text.js requires only pi-tui.
+const _tt = require("./tui-text.js");
+exports.zeroText = _tt.zeroText;
+exports.ZeroText = _tt.ZeroText;
 
 // Duration as a marker segment: only ≥1s is worth showing (sub-second is noise).
 function durationSeg(result) {
@@ -19,6 +25,15 @@ function durationSeg(result) {
     return typeof ms === "number" && ms >= 1000 ? h.formatElapsedMs(ms) : "";
 }
 exports.durationSeg = durationSeg;
+
+// --- fixed-column spine (Round 3 §1.2) -----------------------------------
+// The header glyph (✓/✗/·) occupies column index 1 (after TOOL_RESULT_INDENT).
+// Body lines start at column index 3 so the glyph column stays a clean spine.
+// Applied centrally: gutterLine, marker default indent, failLines, diff.js.
+exports.BODY_INDENT = "   "; // 3 spaces — the body column
+// Tier-2 failure window: full body inline up to inlineMax; above it, head + a
+// hidden-count marker + a tail-biased window (never hide why it broke).
+exports.ERROR_WINDOW = { inlineMax: 30, head: 3, tail: 20 };
 
 // --- width (ANSI / wide-char aware) --------------------------------------
 const vis = (s) => tui.visibleWidth(String(s ?? ""));
@@ -72,12 +87,28 @@ exports.statusOf = statusOf;
 exports.glyph = glyph;
 exports.isErr = isErr;
 
-// --- header grammar: {glyph} {title+primary} {dim annots} ----------------
+// --- header grammar: {glyph} {title+primary} {dim annots} {dim summary} ---
+// The summary (set by renderResult via setSummary) is fused onto the RIGHT of
+// the header on the deferred markDone redraw. The whole line is width-truncated
+// (never wrapped) with a dim › marker; because the summary is rightmost it
+// truncates first when a long title + summary overflow the terminal.
 function header(ctx, titledPrimary, annots) {
     const a = annots ? ` ${annots}` : "";
-    return `${c.TOOL_RESULT_INDENT}${glyph(ctx)} ${titledPrimary}${a}`;
+    const summaryInner = ctx.state && ctx.state.__kitSummary;
+    const summary = summaryInner ? `${dim(SEP)}${summaryInner}` : "";
+    return trunc(`${c.TOOL_RESULT_INDENT}${glyph(ctx)} ${titledPrimary}${a}${summary}`, c.termWidth(), `${c.FG_DIM}›${c.RST}`);
 }
 exports.header = header;
+// setSummary — stash a dim summary string on the SHARED ctx.state; kit.header
+// (called by renderCall on the next/same deferred pass) appends it. NEVER
+// invalidates: the header repaints via markDone's existing single microtask
+// (see markDone above). Rewriting identical content on later passes is a no-op.
+function setSummary(ctx, segs) {
+    if (!ctx.state)
+        return;
+    ctx.state.__kitSummary = markerInner(segs);
+}
+exports.setSummary = setSummary;
 
 // --- separators / dim segments -------------------------------------------
 const SEP = " · ";
@@ -86,6 +117,8 @@ const dim = (s) => `${c.FG_DIM}${s}${c.RST}`;
 // A colored marker segment that returns to dim afterwards (so joinDim keeps flowing).
 const redSeg = (s) => `${c.RST}${c.FG_RED}${s}${c.RST}${c.FG_DIM}`;
 const greenSeg = (s) => `${c.RST}${c.FG_GREEN}${s}${c.RST}${c.FG_DIM}`;
+// @deprecated Round 3 — loses all callers (color budget §1.3). Kept exported
+// for API stability; do not add new callers.
 const warnSeg = (s) => `${c.RST}${c.FG_YELLOW}${s}${c.RST}${c.FG_DIM}`;
 exports.SEP = SEP;
 exports.plural = plural;
@@ -134,7 +167,7 @@ exports.pathSeg = pathSeg;
 function gutterLine(no, nw, code) {
     const s = String(no);
     const pad = " ".repeat(Math.max(0, nw - s.length));
-    return `${c.TOOL_RESULT_INDENT}${c.FG_LNUM}${pad}${s}${c.RST} ${c.FG_RULE}│${c.RST} ${code}${c.RST}`;
+    return `${exports.BODY_INDENT}${c.FG_LNUM}${pad}${s}${c.RST} ${c.FG_RULE}│${c.RST} ${code}${c.RST}`;
 }
 exports.gutterLine = gutterLine;
 
@@ -145,12 +178,44 @@ function markerInner(segs) {
     const f = segs.filter(Boolean);
     return f.length ? `${c.FG_DIM}${f.join(SEP)}${c.RST}` : "";
 }
-function marker(segs, indent = c.TOOL_RESULT_INDENT) {
+function marker(segs, indent = exports.BODY_INDENT) {
     const inner = markerInner(segs);
     return inner ? `${indent}${inner}` : "";
 }
 exports.markerInner = markerInner;
 exports.marker = marker;
+
+// --- Tier-2 failure body (centralized) -----------------------------------
+// The single failure renderer every tool's ctx.isError branch (and bash's
+// nonzero-exit branch) routes through. Full body on BG_ERROR, BODY_INDENT-
+// prefixed; theme.fg("error", …) unless opts.fgError === false (bash output is
+// not prose to paint red). Above ERROR_WINDOW.inlineMax lines: head 3 + a
+// hidden-count marker + tail 20 (tail-biased so the verdict line survives).
+// ≤inlineMax: full body, extraSegs marker appended only when extraSegs nonempty.
+// opts = { fgError?: boolean /*default true*/, extraSegs?: string[] }
+function failLines(rawText, theme, opts = {}) {
+    const render = require("./render.js"); // lazy — avoids a require cycle
+    const { fgError = true, extraSegs = [] } = opts;
+    const paint = (line) => !line ? "" : (fgError && theme && theme.fg ? theme.fg("error", line) : line);
+    const prefixed = (line) => `${exports.BODY_INDENT}${paint(line)}`;
+    const all = h.compactErrorLines(rawText);
+    const W = exports.ERROR_WINDOW;
+    let bodyLines;
+    if (all.length > W.inlineMax) {
+        const head = all.slice(0, W.head).map(prefixed);
+        const tail = all.slice(all.length - W.tail).map(prefixed);
+        const hidden = all.length - W.head - W.tail;
+        const mk = marker([`… +${plural(hidden, "line")}`, ...extraSegs, "ctrl+o"]);
+        bodyLines = [...head, mk, ...tail];
+    }
+    else {
+        bodyLines = all.map(prefixed);
+        if (extraSegs.length)
+            bodyLines.push(marker([...extraSegs]));
+    }
+    return render.fillToolBackground(bodyLines.join("\n"), c.BG_ERROR);
+}
+exports.failLines = failLines;
 
 // --- preview window: inline-if-small, else head + tail -------------------
 // Returns { head:[…], tail:[…], hidden:N }. Caller inserts the marker between

@@ -86,39 +86,36 @@ function gitStatusFor(gs, fp) {
     }
     return null;
 }
-// A single expanded-list entry: kit.pathSeg (dim dir + normal basename), with the
-// basename tinted by git status when present. pathSeg emits `FG_DIM dir RST base`,
-// so we re-color everything after the final RST (the basename) — truncation-safe.
-// A dim "M"/"?" suffix carries the signal when color is unavailable (icon-off).
+// A single expanded-list entry: kit.pathSeg (dim dir + normal basename). Git
+// status (§1.3, judgment (a)) is carried ONLY by a dim "M"/"?" suffix — the
+// FG_GREEN/FG_YELLOW basename tint is cut from the color budget. The basename
+// itself stays default-fg; the suffix is the whole signal.
 function findEntry(p, budget, status) {
-    let seg = kit.pathSeg(p, budget);
-    if (status) {
-        const col = status === "untracked" ? config_js_1.FG_GREEN : config_js_1.FG_YELLOW;
-        const mark = status === "untracked" ? "?" : "M";
-        const idx = seg.lastIndexOf(config_js_1.RST);
-        const head = idx >= 0 ? seg.slice(0, idx + config_js_1.RST.length) : "";
-        const base = idx >= 0 ? seg.slice(idx + config_js_1.RST.length) : seg;
-        seg = `${head}${col}${base}${config_js_1.RST} ${config_js_1.FG_DIM}${mark}${config_js_1.RST}`;
-    }
-    return seg;
+    const seg = kit.pathSeg(p, budget);
+    if (!status)
+        return seg;
+    const mark = status === "untracked" ? "?" : "M";
+    return `${seg} ${config_js_1.FG_DIM}${mark}${config_js_1.RST}`;
 }
-// Collapsed dir histogram — dirs rendered via kit.pathSeg (dim parent + normal
-// leaf) instead of a flat dim. Mirrors kit.dirHistogram's counting/ordering.
-function findHistogram(paths, topN) {
+// Collapsed summary: the single top directory (where the files cluster) and its
+// count, as PLAIN text — the header summary is uniformly dim, so no per-seg color.
+// Mirrors kit.dirHistogram's counting/ordering but returns just the top entry.
+function topDirSeg(paths) {
     const perDir = new Map();
     for (const p of paths) {
         const slash = p.lastIndexOf("/");
         const dir = slash > 0 ? p.slice(0, slash) : slash === 0 ? "/" : ".";
         perDir.set(dir, (perDir.get(dir) || 0) + 1);
     }
-    const entries = [...perDir.entries()].sort((a, b) => b[1] - a[1]);
-    const top = entries.slice(0, topN);
-    const segs = top.map(([d, n]) => `${kit.pathSeg(d)} ${config_js_1.FG_MUTED}(${n})${config_js_1.RST}`);
-    const rest = entries.length - top.length;
-    if (rest > 0)
-        segs.push(`${config_js_1.FG_DIM}… ${(0, kit.plural)(rest, "more dir")}${config_js_1.RST}`);
-    const sep = `${config_js_1.FG_DIM}${kit.SEP}${config_js_1.RST}`;
-    return { line: segs.join(sep), dirs: perDir.size };
+    let bestDir = "";
+    let bestN = -1;
+    for (const [d, n] of perDir) {
+        if (n > bestN) {
+            bestN = n;
+            bestDir = d;
+        }
+    }
+    return bestN > 0 ? `${bestDir} (${bestN})` : "";
 }
 function registerFindTool(pi, cwd, _fffService, sdkTool, TextComp) {
     const TC = (0, tui_text_js_1.resolveTextCtor)(TextComp);
@@ -147,7 +144,8 @@ function registerFindTool(pi, cwd, _fffService, sdkTool, TextComp) {
         renderCall(args, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
             const a = args;
-            const text = ctx.lastComponent ?? new TC("", 0, 0);
+            const prev = ctx.lastComponent;
+            const text = prev && !(prev instanceof kit.ZeroText) ? prev : new TC("", 0, 0);
             const err = (0, kit.isErr)(ctx);
             const pattern = a.pattern == null ? "" : String(a.pattern);
             const path = a.path == null || String(a.path).length === 0 ? "." : (0, helpers_js_1.shortPath)(cwd, home, String(a.path));
@@ -159,49 +157,45 @@ function registerFindTool(pi, cwd, _fffService, sdkTool, TextComp) {
         renderResult(result, _opt, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
             const r = result;
-            const text = ctx.lastComponent ?? new TC("", 0, 0);
+            const prev = ctx.lastComponent;
+            const text = prev && !(prev instanceof kit.ZeroText) ? prev : new TC("", 0, 0);
+            // TIER 2 — failure: host-authoritative ctx.isError routes through the
+            // centralized red-tinted failure body (§4). fgError default (true).
             if (ctx.isError) {
                 kit.markDone(ctx, true);
-                text.setText((0, render_js_1.renderToolError)(getText(r) || "Error", theme));
+                text.setText(kit.failLines(getText(r) || "Error", theme));
                 return text;
             }
             const d = r.details;
             if (d?._type === "findResult") {
                 kit.markDone(ctx, false);
-                const noticeStr = d.notices?.length
-                    ? `\n${config_js_1.TOOL_RESULT_INDENT}${theme.fg("warning", `[${d.notices.join(". ")}]`)}`
-                    : "";
                 const duration = (0, kit.durationSeg)(r);
                 const paths = d.text.split("\n").map((s) => s.trim()).filter(Boolean);
                 const count = d.matchCount || paths.length;
                 const fileSeg = `${count} ${count === 1 ? "file" : "files"}`;
-                if (!paths.length) {
-                    const mk = (0, kit.marker)([fileSeg, duration]);
-                    text.setText((0, render_js_1.fillToolBackground)(`${mk}${noticeStr}\n`));
-                    return text;
-                }
+                // TIER 0 collapsed → summary fused into the header; zero result lines.
+                // Segs are plain text (markerInner dims the whole line); empties drop,
+                // so zero results yields just "0 files [· duration]".
                 if (!ctx.expanded) {
-                    // Collapsed → dir histogram (where the files cluster); dirs via pathSeg.
-                    const hist = findHistogram(paths, 3);
-                    const body = [`${config_js_1.TOOL_RESULT_INDENT}${hist.line}`];
-                    const mk = (0, kit.marker)([`… ${fileSeg}`, (0, kit.plural)(hist.dirs, "dir"), duration, "ctrl+o"]);
-                    if (mk)
-                        body.push(mk);
-                    text.setText((0, render_js_1.fillToolBackground)(`${body.join("\n")}${noticeStr}\n`));
-                    return text;
+                    kit.setSummary(ctx, [fileSeg, topDirSeg(paths), duration]);
+                    return kit.zeroText(ctx);
                 }
-                // Expanded → flat path list; each path via kit.pathSeg, git-tinted.
+                // TIER 0 expanded → flat path list; each path via kit.pathSeg at the
+                // BODY_INDENT spine (§1.2), no fileIcon, git status as a dim suffix.
+                const noticeStr = d.notices?.length
+                    ? `\n${kit.BODY_INDENT}${kit.dim(`[${d.notices.join(". ")}]`)}`
+                    : "";
                 const gs = d.gitStatus;
                 const budget = Math.max(12, (0, config_js_1.termWidth)() - 6);
                 const rendered = [];
                 for (let i = 0; i < paths.length; i++) {
                     if (i >= config_js_1.MAX_PREVIEW_LINES) {
-                        rendered.push(`${config_js_1.TOOL_RESULT_INDENT}${config_js_1.FG_DIM}… ${(0, kit.plural)(paths.length - i, "more file")}${config_js_1.RST}`);
+                        rendered.push(`${kit.BODY_INDENT}${config_js_1.FG_DIM}… ${(0, kit.plural)(paths.length - i, "more file")}${config_js_1.RST}`);
                         break;
                     }
                     const p = paths[i];
                     const status = gitStatusFor(gs, p);
-                    rendered.push(`${config_js_1.TOOL_RESULT_INDENT}${(0, config_js_1.fileIcon)(p)}${findEntry(p, budget, status)}`);
+                    rendered.push(`${kit.BODY_INDENT}${findEntry(p, budget, status)}`);
                 }
                 const mk = (0, kit.marker)([fileSeg, duration]);
                 const body = mk ? [...rendered, mk] : rendered;
@@ -210,7 +204,7 @@ function registerFindTool(pi, cwd, _fffService, sdkTool, TextComp) {
             }
             const fc = r.content?.[0];
             kit.markDone(ctx, false);
-            text.setText((0, render_js_1.fillToolBackground)(`${config_js_1.TOOL_RESULT_INDENT}${theme.fg("dim", fc?.text?.slice(0, 120) ?? "0 files")}\n`));
+            text.setText((0, render_js_1.fillToolBackground)(`${kit.BODY_INDENT}${theme.fg("dim", fc?.text?.slice(0, 120) ?? "0 files")}\n`));
             return text;
         },
     });

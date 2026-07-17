@@ -193,11 +193,13 @@ function renderToolMetrics(result) {
     const details = result.details;
     if (!details)
         return "";
-    const elapsed = (0, helpers_js_1.formatElapsedMs)(details[helpers_js_1.ELAPSED_KEY]);
-    const chars = (0, helpers_js_1.formatCharCount)(details[helpers_js_1.CHARS_KEY]);
-    if (!elapsed && !chars)
+    // Round 3: char count cut (never load-bearing); sub-second elapsed cut
+    // (noise) — only ≥1s is worth showing, matching kit.durationSeg.
+    const ms = details[helpers_js_1.ELAPSED_KEY];
+    const elapsed = typeof ms === "number" && ms >= 1000 ? (0, helpers_js_1.formatElapsedMs)(ms) : "";
+    if (!elapsed)
         return "";
-    return `${config_js_1.FG_DIM}· ${[elapsed, chars].filter(Boolean).join(" · ")}${config_js_1.RST}`;
+    return `${config_js_1.FG_DIM}· ${elapsed}${config_js_1.RST}`;
 }
 function renderToolDuration(result) {
     const details = result.details;
@@ -206,14 +208,17 @@ function renderToolDuration(result) {
 // ---------------------------------------------------------------------------
 // Error renderer
 // ---------------------------------------------------------------------------
+// Round 3 (§4): centralized on kit.failLines — the single Tier-2 failure
+// renderer. Kept as a thin wrapper for the generic makeRenderResult path so the
+// spine (BODY_INDENT, BG_ERROR, tail-biased >30-line window) is identical to the
+// per-tool ctx.isError branches. Lazy require avoids the render↔kit cycle.
 function renderToolError(error, theme) {
-    const body = (0, helpers_js_1.compactErrorLines)(error)
-        .map((line) => `${config_js_1.TOOL_RESULT_INDENT}${line ? theme.fg("error", line) : ""}`)
-        .join("\n");
-    return fillToolBackground(body, config_js_1.BG_ERROR);
+    return require("./kit.js").failLines(error, theme);
 }
 // ---------------------------------------------------------------------------
 // Read — syntax-highlighted file content
+// LEGACY — no callers after round 3 (read.js renders plain gutter body; Shiki
+// cut). Retained for blast-radius control; do not add callers.
 // ---------------------------------------------------------------------------
 async function renderFileContent(content, filePath, offset = 0, maxLines = config_js_1.MAX_PREVIEW_LINES, width) {
     const normalizedContent = (0, helpers_js_1.normalizeLineEndings)(content);
@@ -262,10 +267,13 @@ function buildEntryCells(text) {
     dirs.sort((a, b) => a.localeCompare(b));
     files.sort((a, b) => a.localeCompare(b));
     const cells = [];
+    // Round 3 (F5a): no icons, no FG_BLUE, no bold. Dirs = default-fg name with a
+    // dim trailing slash; files = plain default-fg name. The green/red/blue budget
+    // is reserved for the glyph spine, diff tint, and grep term (§1.3).
     for (const d of dirs)
-        cells.push(`${(0, config_js_1.dirIcon)()}${config_js_1.FG_BLUE}\x1b[1m${d}/${config_js_1.RST}`);
+        cells.push(`${d}${config_js_1.FG_DIM}/${config_js_1.RST}`);
     for (const f of files)
-        cells.push(`${(0, config_js_1.fileIcon)(f)}${f}`);
+        cells.push(f);
     return { cells, dirs: dirs.length, files: files.length, total: entries.length };
 }
 function renderTree(text, _basePath, limit = -1) {
@@ -281,6 +289,9 @@ function renderTree(text, _basePath, limit = -1) {
 exports.buildEntryCells = buildEntryCells;
 // ---------------------------------------------------------------------------
 // Find — grouped file list (plain, no tree characters or icons)
+// LEGACY — no callers after round 3 (find.js renders itself via pathSeg). Kept
+// for blast-radius control; dir headers routed through dim to hold the §1.3
+// color budget so a future caller can't reintroduce the accent/bold-blue cut.
 // ---------------------------------------------------------------------------
 function renderFindResults(text, theme) {
     const lines = text.trim().split("\n").filter(Boolean);
@@ -302,7 +313,7 @@ function renderFindResults(text, theme) {
     for (const [dir, files] of groups) {
         if (count > 0)
             out.push("");
-        const dirColored = theme ? theme.fg("accent", theme.bold(`${dir}/`)) : `${config_js_1.FG_BLUE}\x1b[1m${dir}/${config_js_1.RST}`;
+        const dirColored = theme ? theme.fg("dim", `${dir}/`) : `${config_js_1.FG_DIM}${dir}/${config_js_1.RST}`;
         out.push(dirColored);
         for (let i = 0; i < files.length; i++) {
             if (count >= config_js_1.MAX_PREVIEW_LINES) {
@@ -320,6 +331,8 @@ function renderFindResults(text, theme) {
 }
 // ---------------------------------------------------------------------------
 // Grep — highlighted matches with line numbers
+// LEGACY — no callers after round 3 (grep.js renders via kit sync helpers;
+// Shiki cut). Retained for blast-radius control; do not add callers.
 // ---------------------------------------------------------------------------
 async function renderGrepResults(text, pattern, limit = config_js_1.MAX_PREVIEW_LINES) {
     const lines = (0, helpers_js_1.normalizeLineEndings)(text).split("\n");

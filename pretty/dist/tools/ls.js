@@ -30,23 +30,27 @@ function registerLsTool(pi, cwd, _fffService, sdkTool, TextComp) {
         }),
         renderCall(args, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
-            const text = ctx.lastComponent ?? new TC("", 0, 0);
+            const prev = ctx.lastComponent;
+            const text = prev && !(prev instanceof kit.ZeroText) ? prev : new TC("", 0, 0);
             const err = (0, kit.isErr)(ctx);
             const rawPath = args.path;
             const path = rawPath === null || rawPath === undefined || String(rawPath).length === 0
                 ? "."
                 : (0, helpers_js_1.shortPath)(cwd, home, String(rawPath));
-            const title = `${theme.fg(err ? "error" : "toolTitle", theme.bold("ls"))} ${theme.fg("accent", path)}`;
+            const title = `${theme.fg(err ? "error" : "toolTitle", theme.bold("ls"))} ${kit.pathSeg(path)}`;
             const annots = args.limit !== undefined && args.limit !== null ? theme.fg("dim", `(limit ${args.limit})`) : "";
             text.setText((0, render_js_1.fillToolBackground)(`\n${kit.header(ctx, title, annots)}`, err ? config_js_1.BG_ERROR : undefined));
             return text;
         },
         renderResult(result, _opt, theme, ctx) {
             (0, config_js_1.resolveBaseBackground)(theme);
-            const text = ctx.lastComponent ?? new TC("", 0, 0);
+            const prev = ctx.lastComponent;
+            const text = prev && !(prev instanceof kit.ZeroText) ? prev : new TC("", 0, 0);
+            // Tier 2 (§4): host-authoritative error routes through the single
+            // centralized failure renderer — BG_ERROR tint, full/tail-biased body.
             if (ctx.isError) {
                 kit.markDone(ctx, true);
-                text.setText((0, render_js_1.renderToolError)(getText(result) || "Error", theme));
+                text.setText(kit.failLines(getText(result) || "Error", theme));
                 return text;
             }
             const d = result.details;
@@ -54,19 +58,19 @@ function registerLsTool(pi, cwd, _fffService, sdkTool, TextComp) {
                 kit.markDone(ctx, false);
                 const info = (0, render_js_1.buildEntryCells)(d.text);
                 const duration = (0, kit.durationSeg)(result);
-                const PREVIEW = 12;
-                const limit = ctx.expanded ? -1 : PREVIEW;
-                const hidden = ctx.expanded ? 0 : Math.max(0, info.total - PREVIEW);
-                const rows = (0, render_js_1.renderTree)(d.text, d.path, limit).split("\n").map((l) => `${config_js_1.TOOL_RESULT_INDENT}${l}`);
-                // Zero-chrome: a small fully-shown listing needs no summary line.
-                const mk = (hidden > 0 || ctx.expanded)
-                    ? (0, kit.marker)([
-                        `${hidden > 0 ? "… " : ""}${info.total} ${info.total === 1 ? "entry" : "entries"}`,
-                        info.dirs ? (0, kit.plural)(info.dirs, "dir") : "",
-                        duration,
-                        hidden > 0 ? "ctrl+o" : "",
-                    ])
-                    : "";
+                const entriesSeg = `${info.total} ${info.total === 1 ? "entry" : "entries"}`;
+                const dirsSeg = info.dirs ? (0, kit.plural)(info.dirs, "dir") : "";
+                // Tier 0 collapsed (§1.1): fuse the summary into the header via the
+                // shared ctx.state and render zero body lines. setSummary NEVER
+                // invalidates — the header repaints on markDone's existing microtask.
+                if (!ctx.expanded) {
+                    kit.setSummary(ctx, [entriesSeg, dirsSeg, duration]);
+                    return kit.zeroText(ctx);
+                }
+                // Tier 0 expanded (ctrl+o): full icon-free/blue-free column view at
+                // BODY_INDENT (col 3) + a dim marker. -1 = show all rows.
+                const rows = (0, render_js_1.renderTree)(d.text, d.path, -1).split("\n").map((l) => `${kit.BODY_INDENT}${l}`);
+                const mk = (0, kit.marker)([entriesSeg, dirsSeg, duration]);
                 const body = rows.slice();
                 if (mk)
                     body.push(mk);
@@ -75,7 +79,7 @@ function registerLsTool(pi, cwd, _fffService, sdkTool, TextComp) {
             }
             const fc = result.content?.[0];
             kit.markDone(ctx, false);
-            text.setText((0, render_js_1.fillToolBackground)(`${config_js_1.TOOL_RESULT_INDENT}${theme.fg("dim", fc && "text" in fc ? String(fc.text).slice(0, 120) : "done")}`));
+            text.setText((0, render_js_1.fillToolBackground)(`${kit.BODY_INDENT}${theme.fg("dim", fc && "text" in fc ? String(fc.text).slice(0, 120) : "done")}`));
             return text;
         },
     });

@@ -19,7 +19,9 @@ function getText(result) {
 // "···" line, so cut at the first one; then cap so a single huge hunk stays compact.
 const COLLAPSED_CAP = 14;
 function firstHunk(lines) {
-    const sepIdx = lines.findIndex((l) => l.includes("···"));
+    // Separator rows are the dim "···" line renderDiff inserts between hunks;
+    // they lack a gutter "│", so guard against a literal "···" in edited content.
+    const sepIdx = lines.findIndex((l) => l.includes("···") && !l.includes("│"));
     let body = sepIdx > 0 ? lines.slice(0, sepIdx) : lines;
     if (body.length > COLLAPSED_CAP)
         body = body.slice(0, COLLAPSED_CAP);
@@ -62,7 +64,7 @@ function registerEditTool(pi, cwd, _svc, sdkTool, TextComp) {
             const text = ctx.lastComponent ?? new TC("", 0, 0);
             if (ctx.isError) {
                 kit.markDone(ctx, true);
-                text.setText((0, render_js_1.fillToolBackground)((0, render_js_1.renderToolError)(getText(result) || "Error", theme), config_js_1.BG_ERROR));
+                text.setText(kit.failLines(getText(result) || "Error", theme));
                 return text;
             }
             kit.markDone(ctx, false);
@@ -82,9 +84,10 @@ function registerEditTool(pi, cwd, _svc, sdkTool, TextComp) {
             const context = ctx.expanded ? 3 : 4;
             const lines = diff.renderDiff(oldText, newText, { context, expanded: true, width, theme });
             const body = ctx.expanded ? lines : firstHunk(lines);
+            const counts = `+${added} −${removed}`;
             const mk = ctx.expanded
-                ? (0, kit.marker)([(0, kit.plural)(hunks, "hunk"), kit.greenSeg(`+${added}`), kit.redSeg(`-${removed}`), duration])
-                : (0, kit.marker)([`… ${(0, kit.plural)(hunks, "hunk")}`, kit.greenSeg(`+${added}`), kit.redSeg(`-${removed}`), duration, "ctrl+o"]);
+                ? (0, kit.marker)([(0, kit.plural)(hunks, "hunk"), counts, duration])
+                : (0, kit.marker)([`… ${(0, kit.plural)(hunks, "hunk")}`, counts, duration, "ctrl+o"]);
             const out = mk ? [...body, mk] : body;
             // Diff lines already carry their own bg fill; don't re-wrap them.
             text.setText(`${out.join("\n")}\n`);

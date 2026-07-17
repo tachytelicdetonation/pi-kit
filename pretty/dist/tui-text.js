@@ -11,6 +11,42 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getTextCtor = getTextCtor;
 exports.resolveTextCtor = resolveTextCtor;
+exports.zeroText = zeroText;
+/**
+ * Zero-height result component (Round 3 F1).
+ *
+ * A Tier-0 collapsed success contributes exactly ONE visible line to the stream
+ * (its header, with the summary fused in). The result component must therefore
+ * render nothing at all. ZeroText.render() returns a length-0 array so the
+ * container emits no rows for it.
+ *
+ * setText/invalidate are no-ops but MUST exist: the host calls setText on
+ * re-render and invalidate on resize (StubText comment above documents the same
+ * resize-crash precedent). render(_w) → [] for any width.
+ */
+class ZeroText {
+    setText() {
+        // no-op: this component intentionally has no content
+    }
+    invalidate() {
+        // no-op: exists so Container.invalidate() on resize doesn't crash
+    }
+    render(_width) {
+        return [];
+    }
+}
+exports.ZeroText = ZeroText;
+/**
+ * Returns a stable ZeroText instance cached on ctx.state.__kitZero so
+ * ctx.lastComponent identity stays constant across passes (the host keeps a
+ * single child; a fresh instance each pass would churn lastComponent).
+ */
+function zeroText(ctx) {
+    const state = ctx && ctx.state;
+    if (!state)
+        return new ZeroText();
+    return (state.__kitZero ??= new ZeroText());
+}
 /** No-op stub that satisfies the Text interface so rendering doesn't crash. */
 class StubText {
     constructor(text = "") {

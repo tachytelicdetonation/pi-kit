@@ -57,7 +57,9 @@ function registerWriteTool(pi, cwd, _svc, sdkTool, TextComp) {
             const text = ctx.lastComponent ?? new TC("", 0, 0);
             if (ctx.isError) {
                 kit.markDone(ctx, true);
-                text.setText((0, render_js_1.fillToolBackground)((0, render_js_1.renderToolError)(getText(result) || "Error", theme), config_js_1.BG_ERROR));
+                // Tier 2 (§4): centralized failure body — full text, BG_ERROR tint,
+                // tail-biased above 30 lines. failLines wraps in BG_ERROR itself.
+                text.setText(kit.failLines(getText(result) || "Error", theme));
                 return text;
             }
             kit.markDone(ctx, false);
@@ -65,7 +67,6 @@ function registerWriteTool(pi, cwd, _svc, sdkTool, TextComp) {
             const content = d?._type === "writeResult" ? (d.content ?? "") : "";
             const duration = (0, kit.durationSeg)(result);
             const lineCount = lineCountOf(content);
-            const bytes = Buffer.byteLength(content, "utf8");
             const width = (0, config_js_1.termWidth)();
             // All-additions diff ("" → content): green-tinted, line-numbered, no async.
             const lines = diff.renderDiff("", content, { expanded: true, width, theme });
@@ -74,7 +75,6 @@ function registerWriteTool(pi, cwd, _svc, sdkTool, TextComp) {
             const mk = (0, kit.marker)([
                 "new file",
                 (0, kit.plural)(lineCount, "line"),
-                (0, helpers_js_1.humanSize)(bytes),
                 duration,
                 hidden > 0 ? "ctrl+o" : "",
             ]);

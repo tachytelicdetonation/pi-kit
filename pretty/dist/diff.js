@@ -226,7 +226,10 @@ function renderDiff(oldText, newText, opts = {}) {
     const strongDel = dark ? STRONG_DEL_DARK : STRONG_DEL_LIGHT;
     const codeFg = dark ? FG_TEXT_DARK : FG_TEXT_LIGHT;
     const RWB = render.RESET_WITHOUT_BG; // reset attrs but KEEP the active bg tint
-    const INDENT = c.TOOL_RESULT_INDENT;
+    // Round 3 (F6): body lines start at the col-3 spine, shared with read/bash/
+    // grep bodies. gutterLine (used by ctx/changed rows) already uses BODY_INDENT;
+    // wordLine and sep build lines by hand, so route them through it too.
+    const INDENT = kit.BODY_INDENT;
     const ELL = `${c.FG_DIM}›`; // › truncation marker (matches read/grep)
 
     const ops = computeDiff(oldText, newText);

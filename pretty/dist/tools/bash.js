@@ -69,29 +69,42 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
             if (d?._type === "bashResult") {
                 // Trust the reported exit code; no substring guessing (craft fix).
                 const isErr = ctx.isError || (d.exitCode !== null && d.exitCode !== 0);
-                kit.markDone(ctx, isErr);
                 const cleaned = (0, helpers_js_1.stripBashExitStatusLine)(d.text);
-                const output = isErr ? (0, helpers_js_1.compactErrorLines)(cleaned).join("\n") : cleaned;
-                const allLines = output.split("\n");
+                // TIER 2 — failure (ctx.isError OR nonzero exit) routes through the
+                // centralized kit.failLines: full body on BG_ERROR, default fg
+                // (bash output is not prose to paint red), exit code as a dim
+                // marker seg. Auto-full (no ctrl+o), tail-biased above 30 lines.
+                if (isErr) {
+                    kit.markDone(ctx, true);
+                    text.setText((0, kit.failLines)(cleaned, theme, {
+                        fgError: false,
+                        // Plain string: kit.marker dims the whole line already; a
+                        // kit.dim()-wrapped seg would drop a trailing RST that
+                        // breaks the dim run of the following "ctrl+o" seg.
+                        extraSegs: d.exitCode ? [`exit ${d.exitCode}`] : [],
+                    }));
+                    return text;
+                }
+                // TIER 1 success — tail-biased evidence window (marker above tail).
+                kit.markDone(ctx, false);
                 // Colorize diff-shaped output (+/- lines, @@ hunks, git headers)
-                // BEFORE windowing. Pure synchronous string coloring — line count,
-                // exit-code, duration, and error logic are untouched.
-                const displayLines = colorizeDiffLines(allLines);
+                // BEFORE windowing. Pure synchronous string coloring — this IS
+                // licensed diff coloring (§1.3); line count / duration untouched.
+                const displayLines = colorizeDiffLines(cleaned.split("\n"));
                 const duration = (0, kit.durationSeg)(result); // "" when < 1s
-                const exitSeg = isErr && d.exitCode ? kit.redSeg(`exit ${d.exitCode}`) : "";
                 const rw = (0, config_js_1.termWidth)();
                 const renderFn = (w) => {
-                    // Success: inline ≤6, else head 4 / tail 2 (tail = test/build totals).
-                    // Error: inline ≤8, else head 2 / tail 6 (stderr ends matter most).
+                    // Success: inline ≤6; else tail-biased head 0 / tail 5 (test &
+                    // build totals live at the end), with the marker line ABOVE
+                    // the tail. previewWindow supports head:0 (kit.js).
                     const win = ctx.expanded
                         ? (0, kit.previewWindow)(displayLines, { inlineMax: displayLines.length + 1 })
-                        : (0, kit.previewWindow)(displayLines, isErr ? { inlineMax: 8, head: 2, tail: 6 } : { inlineMax: 6, head: 4, tail: 2 });
+                        : (0, kit.previewWindow)(displayLines, { inlineMax: 6, head: 0, tail: 5 });
                     const body = [];
                     for (const l of win.head)
-                        body.push(`${config_js_1.TOOL_RESULT_INDENT}${l}`);
+                        body.push(`${kit.BODY_INDENT}${l}`);
                     const mk = (0, kit.marker)([
                         win.hidden > 0 ? `… +${(0, kit.plural)(win.hidden, "line")}` : "",
-                        exitSeg,
                         duration,
                         win.hidden > 0 ? "ctrl+o" : "",
                     ]);
@@ -99,23 +112,25 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
                         if (mk)
                             body.push(mk);
                         for (const l of win.tail)
-                            body.push(`${config_js_1.TOOL_RESULT_INDENT}${l}`);
+                            body.push(`${kit.BODY_INDENT}${l}`);
                     }
                     else if (mk) {
                         body.push(mk);
                     }
                     if (body.length === 0) {
-                        const emptyMk = (0, kit.marker)([isErr ? (exitSeg || "failed") : "done", duration]);
-                        return (0, render_js_1.fillToolBackground)(`${emptyMk}\n`, isErr ? config_js_1.BG_ERROR : undefined, w);
+                        // Empty-output success: the marker is bash's evidence floor
+                        // (bash is Tier 1). Keep the "done" line.
+                        const emptyMk = (0, kit.marker)(["done", duration]);
+                        return (0, render_js_1.fillToolBackground)(`${emptyMk}\n`, undefined, w);
                     }
-                    return (0, render_js_1.fillToolBackground)(`${body.join("\n")}\n`, isErr ? config_js_1.BG_ERROR : undefined, w);
+                    return (0, render_js_1.fillToolBackground)(`${body.join("\n")}\n`, undefined, w);
                 };
                 // Width-reactive re-render. Install the wrapper ONCE per component
                 // (guard __kitWrapped) — re-wrapping every pass on a reused
                 // lastComponent stacks layers that fight after a resize. Each pass
                 // just swaps in the fresh renderFn + signature.
                 text.__kitRenderFn = renderFn;
-                text.__kitSig = `${ctx.expanded ? "1" : "0"}:${d.exitCode ?? "?"}:${output.length}:${duration}`;
+                text.__kitSig = `${ctx.expanded ? "1" : "0"}:${d.exitCode ?? "?"}:${cleaned.length}:${duration}`;
                 text.__kitKey = undefined;
                 text.setText(renderFn(rw));
                 if (!text.__kitWrapped) {
@@ -134,13 +149,14 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
                 return text;
             }
             if (ctx.isError) {
+                // Generic (non-bashResult) failure — same centralized Tier-2 path.
                 kit.markDone(ctx, true);
-                text.setText((0, render_js_1.renderToolError)(tc || "Error", theme));
+                text.setText((0, kit.failLines)(tc || "Error", theme, { fgError: false }));
                 return text;
             }
             kit.markDone(ctx, false);
             const fc = result.content?.[0];
-            text.setText((0, render_js_1.fillToolBackground)(`${config_js_1.TOOL_RESULT_INDENT}${theme.fg("dim", fc && "text" in fc ? String(fc.text).slice(0, 120) : "done")}`));
+            text.setText((0, render_js_1.fillToolBackground)(`${kit.BODY_INDENT}${theme.fg("dim", fc && "text" in fc ? String(fc.text).slice(0, 120) : "done")}`));
             return text;
         },
     });
