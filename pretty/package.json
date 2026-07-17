@@ -9,7 +9,6 @@
     "dist/"
   ],
   "dependencies": {
-    "@ff-labs/fff-node": "^0.9.6",
     "@shikijs/cli": "^4.0.2",
     "typebox": "1.1.38"
   },

@@ -2,11 +2,8 @@
 /* pi-pretty: find tool -- FFF-backed file search with SDK (fd) fallback. */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerFindTool = registerFindTool;
-const node_path_1 = require("node:path");
 const config_js_1 = require("../config.js");
-const find_glob_js_1 = require("../find-glob.js");
 const helpers_js_1 = require("../helpers.js");
-const notices_js_1 = require("../notices.js");
 const render_js_1 = require("../render.js");
 const tui_text_js_1 = require("../tui-text.js");
 const kit = require("../kit.js");
@@ -16,34 +13,6 @@ function getText(result) {
         .filter((c) => c.type === "text")
         .map((c) => c.text ?? "")
         .join("\n");
-}
-function buildGlobPattern(pattern, path, basePath) {
-    const raw = pattern.startsWith("/") ? pattern.slice(1) : pattern;
-    const normalized = (0, find_glob_js_1.normalizeFindGlobPattern)(raw);
-    let cleanPath = path ?? "";
-    if (cleanPath && (0, node_path_1.isAbsolute)(cleanPath) && basePath) {
-        cleanPath = (0, node_path_1.relative)(basePath, cleanPath) || "";
-    }
-    cleanPath = cleanPath.replace(/\/$/, "");
-    if (cleanPath) {
-        if (normalized.startsWith("**/")) {
-            return `${cleanPath}/${normalized}`;
-        }
-        if (normalized.includes("/")) {
-            return `${cleanPath}/${normalized}`;
-        }
-        return `${cleanPath}/**/${normalized}`;
-    }
-    return normalized.startsWith("**/") || normalized.includes("/") ? normalized : `**/${normalized}`;
-}
-function appendFindNotices(result, extra) {
-    if (extra.length === 0)
-        return result;
-    const d = result.details;
-    if (!d || d._type !== "findResult")
-        return result;
-    const prev = Array.isArray(d.notices) ? d.notices : [];
-    return { ...result, details: { ...d, notices: [...prev, ...extra] } };
 }
 async function sdkFindAsFindResult(sdkTool, tid, params, sig, ctx, pattern, extraNotices) {
     const result = (await sdkTool.execute(tid, params, sig, undefined, ctx));
@@ -59,7 +28,7 @@ async function sdkFindAsFindResult(sdkTool, tid, params, sig, ctx, pattern, extr
     };
     return result;
 }
-function registerFindTool(pi, cwd, fffService, sdkTool, TextComp) {
+function registerFindTool(pi, cwd, _fffService, sdkTool, TextComp) {
     const TC = (0, tui_text_js_1.resolveTextCtor)(TextComp);
     const home = process.env.HOME ?? "";
     pi.registerTool({
@@ -70,57 +39,8 @@ function registerFindTool(pi, cwd, fffService, sdkTool, TextComp) {
         renderShell: "self",
         execute: (0, metrics_js_1.wrapExecuteWithMetrics)(async (tid, params, sig, _upd, ctx) => {
             const pattern = String(params.pattern ?? "");
-            const path = params.path ? String(params.path) : undefined;
-            const limit = params.limit;
-            const fff = fffService?.isAvailable ? fffService.getFinder() : null;
-            if (fff) {
-                try {
-                    const effectiveLimit = Math.max(1, typeof limit === "number" ? limit : 100);
-                    const basePathResult = fff.getBasePath();
-                    const basePath = basePathResult.ok ? basePathResult.value : null;
-                    const globPattern = buildGlobPattern(pattern, path, basePath);
-                    const searchResult = fff.glob(globPattern, {
-                        pageSize: effectiveLimit,
-                    });
-                    if (searchResult.ok) {
-                        const items = searchResult.value.items.slice(0, effectiveLimit);
-                        const notices = [];
-                        if (fffService?.partialIndex)
-                            notices.push(notices_js_1.NOTICE_PARTIAL_FILE_INDEX);
-                        if (items.length >= effectiveLimit)
-                            notices.push(`${effectiveLimit} limit reached`);
-                        if (searchResult.value.totalMatched > items.length) {
-                            notices.push(`${searchResult.value.totalMatched} total matches`);
-                        }
-                        if (items.length === 0 && (0, find_glob_js_1.isLikelyGlobPattern)(pattern)) {
-                            return sdkFindAsFindResult(sdkTool, tid, params, sig, ctx, pattern, [
-                                "FFF glob returned no matches; results from SDK find (fd).",
-                                ...notices,
-                            ]);
-                        }
-                        if (items.length > 0)
-                            notices.push("Search engine: FFF glob.");
-                        else if (notices.length === 0)
-                            notices.push("Search engine: FFF glob (no matches).");
-                        const paths = items.map((i) => i.relativePath).join("\n");
-                        return {
-                            content: [{ type: "text", text: paths }],
-                            details: {
-                                _type: "findResult",
-                                text: paths,
-                                pattern,
-                                matchCount: items.length,
-                                notices,
-                            },
-                        };
-                    }
-                }
-                catch {
-                    /* fall through to SDK */
-                }
-            }
             return sdkFindAsFindResult(sdkTool, tid, params, sig, ctx, pattern, [
-                fff ? "FFF find unavailable; results from SDK find (fd)." : "Search engine: SDK find (fd).",
+                "Search engine: SDK find (fd).",
             ]);
         }),
         renderCall(args, theme, ctx) {

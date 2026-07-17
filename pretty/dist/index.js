@@ -6,8 +6,11 @@
  *   • Syntax-highlighted file content (Shiki)
  *   • Colored bash exit status + output
  *   • Tree-view directory listings with file-type icons
- *   • FFF-accelerated find/grep with SDK fallback
  *   • Custom ANSI rendering for all tools
+ *
+ * Search acceleration is intentionally NOT bundled here — install the separate
+ * @ff-labs/pi-fff extension for FFF-backed find/grep. find/grep below render
+ * whatever the host SDK search (fd/ripgrep) returns.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.__imageInternals = void 0;
@@ -15,9 +18,6 @@ exports.default = piPrettyExtension;
 // Re-export for tests
 var image_js_1 = require("./image.js");
 Object.defineProperty(exports, "__imageInternals", { enumerable: true, get: function () { return image_js_1.__imageInternals; } });
-const autocomplete_js_1 = require("./autocomplete.js");
-const config_js_1 = require("./config.js");
-const fff_js_1 = require("./fff.js");
 const bash_js_1 = require("./tools/bash.js");
 const find_js_1 = require("./tools/find.js");
 const grep_js_1 = require("./tools/grep.js");
@@ -42,120 +42,12 @@ async function piPrettyExtension(pi, deps) {
             (!DEFAULT_DISABLED_TOOLS.has(normalizedName) || enabledTools.has(normalizedName)));
     };
     const cwd = process.cwd();
-    // ------------------------------------------------------------------
-    // FFF service init
-    // ------------------------------------------------------------------
-    // Keep FFF independent from the Pi SDK import. Published extension installs
-    // run in Pi's isolated npm root; importing a nested Pi SDK at activation time
-    // has proven crash-prone across host Pi versions. FFF commands and indexing
-    // should still work even when SDK tool factories are unavailable.
-    const maybeGetAgentDir = deps?.sdk?.getAgentDir;
-    const agentDir = typeof maybeGetAgentDir === "function" ? maybeGetAgentDir() : (0, config_js_1.getDefaultAgentDir)();
-    const fffService = (0, fff_js_1.getSharedFffService)(deps?.fffModule, agentDir);
     // Text component for custom rendering (DI-friendly)
     const TextComp = deps?.TextComponent;
     // ------------------------------------------------------------------
-    // FFF commands
-    // ------------------------------------------------------------------
-    if (fffService) {
-        pi.registerCommand("fff-health", {
-            description: "Show FFF file finder health and indexer status",
-            handler: async (_args, ctx) => {
-                const fff = fffService;
-                if (!fff || !fff.isAvailable) {
-                    ctx.ui.notify("FFF not initialized", "warning");
-                    return;
-                }
-                const finder = fff.getFinder();
-                if (!finder) {
-                    ctx.ui.notify("FFF not initialized", "warning");
-                    return;
-                }
-                const health = finder.healthCheck();
-                if (!health.ok) {
-                    ctx.ui.notify(`Health check failed: ${health.error}`, "error");
-                    return;
-                }
-                const h = health.value;
-                const lines = [
-                    `FFF v${h.version}`,
-                    `Git: ${h.git.repositoryFound ? `yes (${h.git.workdir ?? "unknown"})` : "no"}`,
-                    `Picker: ${h.filePicker.initialized ? `${h.filePicker.indexedFiles ?? 0} files` : "not initialized"}`,
-                    `Frecency: ${h.frecency.initialized ? "active" : "disabled"}`,
-                    `Query tracker: ${h.queryTracker.initialized ? "active" : "disabled"}`,
-                    `Partial index: ${fff.partialIndex ? "yes (scan timed out)" : "no"}`,
-                ];
-                const progress = finder.getScanProgress();
-                if (progress.ok) {
-                    lines.push(`Scanning: ${progress.value.isScanning ? "yes" : "no"} (${progress.value.scannedFilesCount} files)`);
-                }
-                ctx.ui.notify(lines.join("\n"), "info");
-            },
-        });
-        pi.registerCommand("fff-rescan", {
-            description: "Trigger FFF to rescan files",
-            handler: async (_args, ctx) => {
-                const fff = fffService;
-                if (!fff.isAvailable) {
-                    ctx.ui.notify("FFF not initialized", "warning");
-                    return;
-                }
-                const finder = fff.getFinder();
-                if (!finder) {
-                    ctx.ui.notify("FFF not initialized", "warning");
-                    return;
-                }
-                const result = finder.scanFiles();
-                if (!result.ok) {
-                    ctx.ui.notify(`Rescan failed: ${result.error}`, "error");
-                    return;
-                }
-                fff.partialIndex = false;
-                ctx.ui.notify("FFF rescan triggered", "info");
-            },
-        });
-    }
-    // ------------------------------------------------------------------
-    // Session lifecycle
-    // ------------------------------------------------------------------
-    pi.on("session_start", async (_event, ctx) => {
-        if (!fffService)
-            return;
-        try {
-            // Try dynamic import if sync require failed
-            if (!fffService.isModuleLoaded()) {
-                const loaded = await fffService.tryLoadModule();
-                if (!loaded)
-                    return;
-            }
-            await fffService.ensureFinder(ctx.cwd);
-            if (fffService.partialIndex) {
-                ctx.ui?.notify?.("FFF: scan timed out — using partial index. Run /fff-rescan when ready.", "warning");
-            }
-            else {
-                const ui = ctx.ui;
-                ui?.setStatus?.("fff", "FFF indexed");
-                setTimeout(() => ui?.setStatus?.("fff", undefined), 3000);
-            }
-            // Register FFF-backed @-mention autocomplete only after a finder exists.
-            ctx.ui?.addAutocompleteProvider?.((current) => (0, autocomplete_js_1.createFffAutocompleteProvider)(current, () => fffService?.getFinder() ?? null));
-        }
-        catch (error) {
-            ctx.ui?.notify?.(`FFF init failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-        }
-    });
-    pi.on("session_shutdown", async () => {
-        // Intentionally keep the native FFF finder on session shutdown.
-        // Pi can emit shutdown/start during resume or session switching while the
-        // process keeps running. Native teardown, or dropping the JS handle while the
-        // native LMDB frecency env stays open, can make the next init fail with
-        // "environment already open in this program". Let process exit reclaim it.
-    });
-    // ------------------------------------------------------------------
     // Resolve SDK tools, if available
     // ------------------------------------------------------------------
-    // The SDK import is optional. Do not return from the extension if it fails;
-    // FFF commands/indexing above must remain available in published npm installs.
+    // The SDK import is optional. Do not return from the extension if it fails.
     let sdk = deps?.sdk ?? {};
     let createReadTool = sdk.createReadTool ?? sdk.createReadToolDefinition;
     let createBashTool = sdk.createBashTool ?? sdk.createBashToolDefinition;
@@ -196,10 +88,10 @@ async function piPrettyExtension(pi, deps) {
         (0, ls_js_1.registerLsTool)(pi, cwd, null, createLsTool(cwd), TextComp);
     }
     if (isToolEnabled("find") && createFindTool) {
-        (0, find_js_1.registerFindTool)(pi, cwd, fffService, createFindTool(cwd), TextComp);
+        (0, find_js_1.registerFindTool)(pi, cwd, null, createFindTool(cwd), TextComp);
     }
     if (isToolEnabled("grep") && createGrepTool) {
-        (0, grep_js_1.registerGrepTool)(pi, cwd, fffService, createGrepTool(cwd), TextComp);
+        (0, grep_js_1.registerGrepTool)(pi, cwd, null, createGrepTool(cwd), TextComp);
     }
     // Fallback padding for SDK-rendered tool bodies. The SDK reads
     // result.content[0].text and slices collapsed output to roughly the first
