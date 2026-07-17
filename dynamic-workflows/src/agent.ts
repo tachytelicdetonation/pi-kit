@@ -358,6 +358,8 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
    * a warning is logged. When omitted, the session default applies.
    */
   model?: string;
+  /** Per-agent thinking effort. Overrides the inherited parent thinking level. */
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   /**
    * Model tier name (e.g. "small", "medium", "big"). When set (and no explicit
    * `model` is given), the model is resolved from the user's model-tiers.json
@@ -569,7 +571,9 @@ export class WorkflowAgent {
       ...this.sessionOptions,
       // Per-call model/thinking wins over any sessionOptions defaults.
       ...(resolvedModel ? { model: resolvedModel } : {}),
-      ...(resolvedThinkingLevel ? { thinkingLevel: resolvedThinkingLevel } : {}),
+      ...(resolvedThinkingLevel || options.thinkingLevel
+        ? { thinkingLevel: resolvedThinkingLevel ?? options.thinkingLevel }
+        : {}),
     });
 
     // Name the persisted session so it's identifiable in session pickers.

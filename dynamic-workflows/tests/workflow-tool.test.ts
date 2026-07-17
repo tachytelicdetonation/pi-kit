@@ -258,6 +258,14 @@ function deferredToolAgent() {
   };
 }
 
+async function waitForToolRun(manager: WorkflowManager, runId: string, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (manager.getRun(runId)?.status === "running") {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for workflow run");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 function withToolTempCwd(fn: (cwd: string) => Promise<void>) {
   return async () => {
     const cwd = mkdtempSync(join(tmpdir(), "pi-dw-tool-"));
@@ -335,6 +343,42 @@ test(
     );
     da.resolve("ok");
     await promise.catch(() => {});
+  }),
+);
+
+test(
+  "workflow tool: denied launch creates no managed run",
+  withToolTempCwd(async (cwd) => {
+    const manager = new WorkflowManager({ cwd, agent: toolFakeAgent() });
+    const tool = createWorkflowTool({
+      cwd,
+      manager,
+      reviewLaunch: async () => ({ approved: false }),
+    });
+    await assert.rejects(
+      () => tool.execute("denied", { script: resumeToolScript }, undefined, undefined, {} as never),
+      /APPROVAL_DENIED/,
+    );
+    assert.equal(manager.listRuns().length, 0);
+  }),
+);
+
+test(
+  "workflow tool: launch review can edit the script before execution",
+  withToolTempCwd(async (cwd) => {
+    const manager = new WorkflowManager({ cwd, agent: toolFakeAgent() });
+    const edited = `export const meta = { name: 'reviewed', description: 'reviewed launch' }
+await agent('A', { label: 'a' })
+return 'reviewed'`;
+    const tool = createWorkflowTool({
+      cwd,
+      manager,
+      reviewLaunch: async () => ({ approved: true, script: edited }),
+    });
+    const response = await tool.execute("edited", { script: resumeToolScript }, undefined, undefined, {} as never);
+    const runId = (response.details as { runId: string }).runId;
+    await waitForToolRun(manager, runId);
+    assert.equal(manager.getRun(runId)?.result?.result, "reviewed");
   }),
 );
 

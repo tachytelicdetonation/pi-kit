@@ -7,6 +7,7 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { WorkflowAgent } from "./agent.js";
 import { preview, type WorkflowSnapshot } from "./display.js";
 import { WorkflowError, WorkflowErrorCode } from "./errors.js";
+import type { HostWorkflowContext } from "./host-workflow-context.js";
 import {
   createRunPersistence,
   generateRunId,
@@ -32,6 +33,8 @@ export interface ManagedRun {
   journal: JournalEntry[];
   /** Cross-process execution lease for this run, when it is actively executing. */
   lease?: RunLease;
+  /** In-memory launch capability snapshot; executable definitions are never persisted. */
+  hostContext?: HostWorkflowContext;
   /**
    * True when the run was started in the background (or resumed) and the caller is
    * not awaiting its result inline. Only background runs deliver their result back
@@ -51,6 +54,8 @@ export interface ManagedRun {
 export interface ExecOptions {
   /** Replay these journaled agent results for the unchanged prefix (resume). */
   resumeJournal?: Map<number, JournalEntry>;
+  /** Immutable executable tools and permission route captured from the parent invocation. */
+  hostContext?: HostWorkflowContext;
   /** Cap on total agents for this run. */
   maxAgents?: number;
   /** Per-agent timeout in milliseconds. null/omitted means no hard timeout. */
@@ -229,6 +234,7 @@ export class WorkflowManager extends EventEmitter {
       background: true,
       lease,
       autoResume: exec.autoResume,
+      hostContext: exec.hostContext,
     };
 
     this.runs.set(runId, managed);
@@ -278,6 +284,7 @@ export class WorkflowManager extends EventEmitter {
     if (!lease) throw new Error(`Could not acquire workflow run lease for ${managed.runId}`);
     managed.lease = lease;
     managed.autoResume = exec.autoResume;
+    managed.hostContext = exec.hostContext;
     this.runs.set(managed.runId, managed);
     // Persist the initial state immediately so listRuns()/the task panel can see
     // the run the moment it starts, not only after the first agent journals.
@@ -335,7 +342,10 @@ export class WorkflowManager extends EventEmitter {
       concurrency,
       agentRetries,
       confirm,
+      hostContext: requestedHostContext,
     } = exec;
+    const hostContext = requestedHostContext ?? managed.hostContext;
+    managed.hostContext = hostContext;
     const resolvedAgentTimeoutMs = agentTimeoutMs !== undefined ? agentTimeoutMs : this.defaultAgentTimeoutMs;
     const resolvedConcurrency = concurrency ?? this.concurrency;
     const resolvedAgentRetries = agentRetries ?? this.defaultAgentRetries;
@@ -349,6 +359,7 @@ export class WorkflowManager extends EventEmitter {
       const result = await runWorkflow(script, {
         cwd: this.cwd,
         args,
+        hostContext,
         // Use the managed run's persisted id as the workflow runId so the value
         // returned in result.runId matches the id that listRuns()/resume() use.
         // Otherwise runWorkflow mints an ephemeral `run-<ts>` id and the sync
@@ -580,7 +591,10 @@ export class WorkflowManager extends EventEmitter {
    * UsageLimitScheduler) unchanged. `opts.args` overrides the persisted args
    * only when provided; otherwise the persisted args are kept.
    */
-  async resume(runId: string, opts?: { script?: string; args?: unknown }): Promise<boolean> {
+  async resume(
+    runId: string,
+    opts?: { script?: string; args?: unknown; hostContext?: HostWorkflowContext },
+  ): Promise<boolean> {
     // Guard: refuse to resume a run that is already running, or one that was
     // intentionally aborted (pause/stop/Esc). Paused and failed runs can restart.
     const active = this.runs.get(runId);
@@ -622,6 +636,7 @@ export class WorkflowManager extends EventEmitter {
       // Carry the original opt-out forward across resumes; it's fixed at
       // run-start and persistRun() re-persists it on every subsequent write.
       autoResume: persisted.autoResume,
+      hostContext: opts?.hostContext ?? active?.hostContext,
     };
     this.runs.set(runId, managed);
     // Persist before notifying renderers: listRuns() is their source of truth for
@@ -631,7 +646,7 @@ export class WorkflowManager extends EventEmitter {
     const resumeJournal = new Map((persisted.journal ?? []).map((e) => [e.index, e] as const));
     this.emit("resumed", { runId });
     // Run in the background; executeRun records status/errors on the managed run.
-    void this.executeRun(managed, script, args, { resumeJournal }).catch(() => {});
+    void this.executeRun(managed, script, args, { resumeJournal, hostContext: managed.hostContext }).catch(() => {});
     return true;
   }
 

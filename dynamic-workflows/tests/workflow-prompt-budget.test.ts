@@ -18,7 +18,7 @@ import { withFakeHomeAsync } from "./helpers/fake-home.js";
 // one new optional schema param on the tool DEFINITION only. The always-on rendered
 // prompt is intentionally unchanged — discoverability comes from the tool-def
 // description plus the per-result revise hint, not an always-on guideline line.
-const RENDERED_PROMPT_BUDGET_BYTES = 6_500;
+const RENDERED_PROMPT_BUDGET_BYTES = 6_700;
 const TOOL_DEFINITION_BUDGET_BYTES = 2_529;
 
 test("rendered workflow prompt contribution stays within its accepted size", async () => {

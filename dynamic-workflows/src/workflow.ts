@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import vm from "node:vm";
 import type { Node } from "acorn";
 import { parse } from "acorn";
 import type { TSchema } from "typebox";
@@ -15,9 +14,12 @@ import {
 } from "./agent-registry.js";
 import { DEFAULT_AGENT_TIMEOUT_MS, MAX_AGENT_RETRIES, MAX_AGENTS_PER_RUN, MAX_CONCURRENCY } from "./config.js";
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js";
+import type { HostWorkflowContext, WorkflowThinkingLevel } from "./host-workflow-context.js";
 import { createWorkflowLogger } from "./logger.js";
 import { parseModelRoutingFromMeta, resolveModelForPhase } from "./model-routing.js";
+import { ProcessWorkflowAgent } from "./process-agent.js";
 import { createAgentStoreTools, SharedStore } from "./shared-store.js";
+import { runWorkflowSandbox } from "./workflow-sandbox.js";
 import { createWorktree, removeWorktree, type Worktree } from "./worktree.js";
 
 export interface WorkflowMetaPhase {
@@ -65,6 +67,8 @@ export interface SharedRuntime {
 export interface WorkflowRunOptions extends WorkflowAgentOptions {
   args?: unknown;
   agent?: Pick<WorkflowAgent, "run">;
+  /** Immutable parent capabilities; when present, agents run in isolated processes. */
+  hostContext?: HostWorkflowContext;
   /** The session's main model (provider/id), shown in /workflows for default agents. */
   mainModel?: string;
   /**
@@ -171,6 +175,8 @@ export interface AgentOptions<TSchemaDef extends TSchema | undefined = TSchema |
    * no configured entry it falls back to the session's main model.
    */
   tier?: string;
+  /** Per-agent reasoning effort, independent of model selection. */
+  effort?: WorkflowThinkingLevel;
   isolation?: "worktree";
   /**
    * Name of a registered subagent definition (`.pi/agents/<name>.md`, project >
@@ -227,38 +233,6 @@ type AnyNode = Node & { [key: string]: any; start: number; end: number };
 // Parse-time author hint (fast feedback). The real enforcement is DETERMINISM_PRELUDE.
 const DETERMINISM_BLOCKLIST = /\bDate\s*\.\s*now\b|\bMath\s*\.\s*random\b|\bnew\s+Date\s*\(\s*\)/;
 
-/**
- * Runtime determinism hardening, run inside the vm realm BEFORE the user script.
- * It neuters the nondeterministic builtins that would break resume (they'd make a
- * re-run produce different values than the cached journal):
- *   - Math.random()        -> throws
- *   - Date.now()           -> throws
- *   - Date() / new Date()  -> throws (no-arg); new Date(arg) still works
- * Using the vm realm's own Math/Date/Reflect (not host objects) means this adds
- * no host-`Function` escape. Note: vm is not a security sandbox — an injected
- * bridge function's `.constructor` is still the host Function, so a determined
- * script could bypass this. The guard is best-effort against ACCIDENTAL
- * nondeterminism from trusted (user / guided-LLM) scripts, not a security wall.
- */
-const DETERMINISM_PRELUDE = [
-  '"use strict";',
-  'Math.random = () => { throw new Error("Math.random() is unavailable in a workflow (it breaks resume); pass randomness via args or vary by index"); };',
-  "{",
-  "  const RealDate = Date;",
-  '  const fail = (w) => { throw new Error(w + " is unavailable in a workflow (it breaks resume); pass a timestamp via args"); };',
-  "  const SafeDate = function (...a) {",
-  '    if (!new.target) fail("Date()");',
-  '    if (a.length === 0) fail("new Date()");',
-  "    return Reflect.construct(RealDate, a, SafeDate);",
-  "  };",
-  "  SafeDate.UTC = RealDate.UTC;",
-  "  SafeDate.parse = RealDate.parse;",
-  '  SafeDate.now = () => fail("Date.now()");',
-  "  SafeDate.prototype = RealDate.prototype;",
-  "  globalThis.Date = SafeDate;",
-  "}",
-].join("\n");
-
 export async function runWorkflow<T = unknown>(
   script: string,
   options: WorkflowRunOptions = {},
@@ -296,7 +270,11 @@ export async function runWorkflow<T = unknown>(
     firstMiss: Number.POSITIVE_INFINITY,
   };
 
-  const agentRunner = options.agent ?? new WorkflowAgent(options);
+  const agentRunner =
+    options.agent ??
+    (options.hostContext
+      ? new ProcessWorkflowAgent({ hostContext: options.hostContext, runId })
+      : new WorkflowAgent(options));
   const concurrency = normalizeConcurrency(
     options.concurrency ?? Math.max(1, (globalThis.navigator?.hardwareConcurrency ?? 8) - 2),
   );
@@ -493,17 +471,20 @@ export async function runWorkflow<T = unknown>(
           try {
             throwIfAborted();
 
-            // Run agent with timeout
+            // Run each attempt with its own cancellation scope. A timeout aborts
+            // and fully settles the underlying agent before a retry can start.
+            const attemptSignal = createLinkedAbortController(options.signal);
             const result = await withTimeout(
               agentRunner.run(prompt, {
                 label,
                 // Identifiable name for persisted sessions (persistAgentSessions).
                 sessionName: `workflow:${runId} ${label}`,
                 schema: agentOptions.schema,
-                signal: options.signal,
+                signal: attemptSignal.signal,
                 instructions: buildAgentInstructions(assignedPhase, agentOptions, agentDef, resolvedIsolation),
                 model: modelSpec,
                 tier: agentOptions.tier,
+                thinkingLevel: agentOptions.effort,
                 modelRegistry: options.modelRegistry,
                 toolNames: agentDef?.tools,
                 disallowedToolNames: agentDef?.disallowedTools,
@@ -529,7 +510,8 @@ export async function runWorkflow<T = unknown>(
               }),
               timeout,
               label,
-            );
+              () => attemptSignal.abort(),
+            ).finally(attemptSignal.dispose);
 
             throwIfAborted();
             if (isEmptyTextAgentResult(result, agentOptions.schema)) {
@@ -624,7 +606,7 @@ export async function runWorkflow<T = unknown>(
     );
   };
 
-  const pipeline = async (
+  const _pipeline = async (
     items: unknown[],
     ...stages: Array<(prev: unknown, original: unknown, index: number) => unknown>
   ) => {
@@ -695,7 +677,7 @@ export async function runWorkflow<T = unknown>(
     properties: { real: { type: "boolean" }, reason: { type: "string" } },
     required: ["real"],
   };
-  const verify = async (
+  const _verify = async (
     item: unknown,
     opts: { reviewers?: number; threshold?: number; lens?: string | string[] } = {},
   ) => {
@@ -724,7 +706,7 @@ export async function runWorkflow<T = unknown>(
     properties: { score: { type: "number" }, reason: { type: "string" } },
     required: ["score"],
   };
-  const judgePanel = async (attempts: unknown[], opts: { judges?: number; rubric?: string } = {}) => {
+  const _judgePanel = async (attempts: unknown[], opts: { judges?: number; rubric?: string } = {}) => {
     const judges = Math.max(1, opts.judges ?? 3);
     const rubric = opts.rubric ?? "overall quality and correctness";
     const scored = (
@@ -757,7 +739,7 @@ export async function runWorkflow<T = unknown>(
     return best;
   };
 
-  const loopUntilDry = async (opts: {
+  const _loopUntilDry = async (opts: {
     round: (roundIndex: number) => Promise<unknown[]> | unknown[];
     key?: (item: unknown) => string;
     consecutiveEmpty?: number;
@@ -800,7 +782,7 @@ export async function runWorkflow<T = unknown>(
     properties: { complete: { type: "boolean" }, missing: { type: "array", items: { type: "string" } } },
     required: ["complete"],
   };
-  const completenessCheck = (taskArgs: unknown, results: unknown) =>
+  const _completenessCheck = (taskArgs: unknown, results: unknown) =>
     agent(
       `Given the task and the results gathered so far, list what is still MISSING (modalities not covered, claims unverified, gaps). Be specific and concise.\n\nTask:\n${JSON.stringify(taskArgs)}\n\nResults so far:\n${JSON.stringify(results).slice(0, 4000)}`,
       { label: "completeness critic", schema: COMPLETENESS_SCHEMA },
@@ -811,7 +793,7 @@ export async function runWorkflow<T = unknown>(
   // under a stable callSeq (resume-safe). No backoff: there is no timer in the vm
   // and a delay has no resume value. NOTE: attempt N+1's call hash depends on N's
   // live result, so a retry/gate chain cache-miss-cascades on resume (correct).
-  const retry = async (
+  const _retry = async (
     thunk: (attempt: number) => Promise<unknown> | unknown,
     opts: { attempts?: number; until?: (r: unknown) => boolean } = {},
   ) => {
@@ -823,7 +805,7 @@ export async function runWorkflow<T = unknown>(
     }
     return last; // attempts exhausted — return the last result (caller inspects it)
   };
-  const gate = async (
+  const _gate = async (
     thunk: (feedback: string | undefined, attempt: number) => Promise<unknown> | unknown,
     validator: (r: unknown) => Promise<{ ok: boolean; feedback?: string }> | { ok: boolean; feedback?: string },
     opts: { attempts?: number } = {},
@@ -882,39 +864,26 @@ export async function runWorkflow<T = unknown>(
     return reply;
   };
 
-  const context = vm.createContext(
-    {
-      agent,
-      parallel,
-      pipeline,
-      workflow: workflowFn,
-      verify,
-      judgePanel,
-      loopUntilDry,
-      completenessCheck,
-      retry,
-      gate,
-      checkpoint,
-      log,
-      phase,
-      args: options.args,
-      cwd: options.cwd ?? process.cwd(),
-      process: Object.freeze({ cwd: () => options.cwd ?? process.cwd() }),
-      budget,
-      console: {
-        log,
-        info: log,
-        warn: (m: unknown) => log(`[warn] ${String(m)}`),
-        error: (m: unknown) => log(`[error] ${String(m)}`),
-      },
-      // Object/Array/JSON/Math/Date/Promise/Set/Map/etc. come from the vm realm.
-    },
-    { codeGeneration: { strings: false, wasm: false } },
-  );
-
-  const wrapped = `${DETERMINISM_PRELUDE}\n(async () => {\n${body}\n})()`;
   try {
-    const result = await new vm.Script(wrapped, { filename: `${meta.name || "workflow"}.js` }).runInContext(context);
+    const result = await runWorkflowSandbox<T>({
+      body,
+      filename: `${meta.name || "workflow"}.js`,
+      args: options.args,
+      cwd: baseCwd,
+      initialPhase: state.currentPhase,
+      budgetTotal: options.tokenBudget ?? null,
+      budgetSpent: shared.spent,
+      signal: options.signal,
+      compatibilityMode: Boolean(options.hostContext),
+      handlers: {
+        agent: (prompt, sandboxOptions) => agent(prompt, sandboxOptions as AgentOptions),
+        workflow: workflowFn,
+        checkpoint: (promptText, sandboxOptions) => checkpoint(promptText, sandboxOptions as CheckpointOptions),
+        phase,
+        log,
+        budgetSpent: () => shared.spent,
+      },
+    });
 
     // Persist logs
     const logFile = logger.persist();
@@ -1108,8 +1077,11 @@ function hashAgentCall(
   const identity = JSON.stringify({
     prompt,
     model: model ?? null,
+    label: options.label?.trim() || null,
     tier: options.tier ?? null,
+    effort: options.effort ?? null,
     phase: phase ?? null,
+    isolation: options.isolation ?? null,
     agentType: options.agentType ?? null,
     // Resolved definition (tools/model/prompt) so editing an agent .md invalidates
     // this call's cached result on a later resume.
@@ -1159,26 +1131,47 @@ function normalizeAgentRetries(value: unknown): number {
 /**
  * Run a promise with a timeout.
  */
-async function withTimeout<T>(promise: Promise<T>, ms: number | null, label: string): Promise<T> {
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number | null,
+  label: string,
+  onTimeout?: () => void,
+): Promise<T> {
   if (ms === null) return promise;
 
   let timeoutId: NodeJS.Timeout | undefined;
-
+  let timedOut = false;
+  const timeoutError = new WorkflowError(
+    `Agent "${label}" timed out after ${ms}ms; raise or omit timeoutMs/agentTimeoutMs to allow longer runs`,
+    WorkflowErrorCode.AGENT_TIMEOUT,
+    { recoverable: true },
+  );
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
-      reject(
-        new WorkflowError(
-          `Agent "${label}" timed out after ${ms}ms; raise or omit timeoutMs/agentTimeoutMs to allow longer runs`,
-          WorkflowErrorCode.AGENT_TIMEOUT,
-          { recoverable: true },
-        ),
-      );
+      timedOut = true;
+      reject(timeoutError);
+      onTimeout?.();
     }, ms);
   });
 
   try {
     return await Promise.race([promise, timeoutPromise]);
+  } catch (error) {
+    if (timedOut) {
+      await promise.catch(() => undefined);
+      throw timeoutError;
+    }
+    throw error;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+function createLinkedAbortController(parent?: AbortSignal): AbortController & { dispose(): void } {
+  const controller = new AbortController() as AbortController & { dispose(): void };
+  const abort = () => controller.abort(parent?.reason);
+  if (parent?.aborted) abort();
+  else parent?.addEventListener("abort", abort, { once: true });
+  controller.dispose = () => parent?.removeEventListener("abort", abort);
+  return controller;
 }

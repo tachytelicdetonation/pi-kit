@@ -1,9 +1,10 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { extname, resolve } from "node:path";
-import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { listAgentTypes, loadAgentRegistry } from "./agent-registry.js";
+import { resolveClaudeWorkflowInvocationSource } from "./claude-workflow-contract.js";
 import {
   createToolUpdateWorkflowDisplay,
   createWorkflowSnapshot,
@@ -16,6 +17,7 @@ import {
   type WorkflowSnapshot,
 } from "./display.js";
 import { WorkflowError, WorkflowErrorCode } from "./errors.js";
+import type { HostWorkflowContext } from "./host-workflow-context.js";
 import { parseWorkflowScript, type WorkflowRunResult } from "./workflow.js";
 import { WorkflowManager } from "./workflow-manager.js";
 import { createWorkflowStorage, type WorkflowStorage } from "./workflow-saved.js";
@@ -132,6 +134,18 @@ export type WorkflowToolInput = {
   resumeFromRunId?: string;
 };
 
+export interface WorkflowLaunchReview {
+  readonly script: string;
+  readonly sourcePath?: string;
+  readonly workflowName: string;
+  readonly ctx: ExtensionContext;
+}
+
+export interface WorkflowLaunchReviewResult {
+  readonly approved: boolean;
+  readonly script?: string;
+}
+
 export interface WorkflowToolOptions {
   cwd?: string;
   concurrency?: number;
@@ -145,6 +159,10 @@ export interface WorkflowToolOptions {
   defaultConcurrency?: number;
   /** Default retry attempts after recoverable agent failures. */
   defaultAgentRetries?: number;
+  /** Capture immutable parent capabilities for process-isolated subagents. */
+  createHostContext?: (ctx: ExtensionContext, signal?: AbortSignal) => HostWorkflowContext | undefined;
+  /** Review an untrusted launch before any run or resume begins. */
+  reviewLaunch?: (review: WorkflowLaunchReview) => Promise<WorkflowLaunchReviewResult>;
 }
 
 export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefinition<typeof workflowToolSchema, any> {
@@ -178,11 +196,11 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
         "For workflow, provide scriptPath, inline script, or a saved name. scriptPath takes precedence over script, which takes precedence over name.",
         "For workflow, the script's first statement must be `export const meta = { name: 'short_snake_case', description: 'non-empty human description', phases: [{ title: 'Phase name' }] }`; meta.name and meta.description are required non-empty strings.",
         "For workflow, write plain JavaScript after the meta export. Do not use TypeScript syntax, imports, require(), fs, Date.now(), Math.random(), or new Date().",
-        "For workflow, available globals are agent(prompt, opts), parallel(thunks), pipeline(items, ...stages), phase(title), log(message), args, cwd, process.cwd(), and budget. Every workflow must call agent() at least once; do not use workflow only to declare phases or return a static object.",
-        "For workflow, prefer the built-in quality helpers when they fit (each is built on agent()/parallel() and returns plain data): verify(item, {reviewers, threshold, lens}) for adversarial fact-checking; judgePanel(attempts, {judges, rubric}) to score N candidates and return the best; loopUntilDry({round, key, consecutiveEmpty}) to keep finding until rounds stop yielding new items; completenessCheck(args, results) as a final 'what's missing' critic.",
+        "For workflow, Claude-compatible globals are agent(prompt, opts), parallel(thunks), pipeline(items, ...stages), phase(title), and args. Pi additions are namespaced under pi: pi.log(message), pi.budget, pi.checkpoint(), pi.workflow(), and the quality helpers. Every workflow must call agent() at least once; do not use workflow only to declare phases or return a static object.",
+        "For workflow, prefer Pi's namespaced quality helpers when they fit (each is built on agent()/parallel() and returns plain data): pi.verify(item, {reviewers, threshold, lens}) for adversarial fact-checking; pi.judgePanel(attempts, {judges, rubric}) to score N candidates and return the best; pi.loopUntilDry({round, key, consecutiveEmpty}) to keep finding until rounds stop yielding new items; pi.completenessCheck(args, results) as a final 'what's missing' critic.",
         "For workflow, when meta.phases declares more than one phase, call phase('Exact Title') at the start of each phase's work (or set opts.phase on each agent) so every agent groups under the correct phase; never declare a phase you don't switch into — a declared phase with no agents shows as 0/0 and any agent you forgot to move stays in the previous phase.",
         "For workflow, do not set tokenBudget or agentTimeoutMs unless the user explicitly asks to cap spend or time; the defaults are unbounded.",
-        "For workflow, to bound spend: pass tokenBudget for a hard run-wide cap; carve a per-phase ceiling with phase('Name', {budget: N}) (that phase throws at its sub-budget without touching the run total — wrap its work in try/catch so later phases proceed); use retry(thunk, {attempts, until}) for bounded retry, and gate(thunk, validator, {attempts}) when a validator's feedback should steer the next attempt. To degrade gracefully, branch on budget.remaining() to skip optional rounds or choose a lighter tier.",
+        "For workflow, to bound spend: pass tokenBudget for a hard run-wide cap; carve a per-phase ceiling with phase('Name', {budget: N}) (that phase throws at its sub-budget without touching the run total — wrap its work in try/catch so later phases proceed); use pi.retry(thunk, {attempts, until}) for bounded retry, and pi.gate(thunk, validator, {attempts}) when validator feedback should steer the next attempt. To degrade gracefully, branch on pi.budget.remaining() to skip optional rounds or choose a lighter tier.",
         "For workflow, prefer it for decomposable work: repository inspection, independent research/checks, multi-perspective review, or fan-out/fan-in synthesis. Do not use it for a single quick file read/edit or when ordinary tools are enough.",
         "For workflow, parallel() takes functions, not promises: use `await parallel(items.map(item => () => agent('...', { label: '...' })))`, never `await parallel(items.map(item => agent(...)))`. Results are returned in input order.",
         "For workflow, pipeline(items, ...stages) runs each item through stages sequentially, while different items may run concurrently. Each stage receives (previousValue, originalItem, index).",
@@ -197,7 +215,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
         agentTypeGuideline(),
         "For workflow, do not assume the parent assistant has repository code context inside subagents; include enough task context and relevant paths in each agent prompt.",
         "For workflow, runs are background by default: the tool returns immediately with a run ID, the turn ends so the user isn't blocked, and the result is delivered back into the conversation when the run finishes. Pass background: false only when you must use the result inline in this same turn (it will block).",
-        "For workflow, you may call `await workflow('saved-name', argsObject)` to run a saved workflow inline and use its result; nesting is one level deep only, and the global 16-concurrent / 1000-total caps hold across the nesting.",
+        "For workflow, you may call `await pi.workflow('saved-name', argsObject)` to run a saved workflow inline and use its result; nesting is one level deep only, and the global 16-concurrent / 1000-total caps hold across the nesting.",
       ].filter((g): g is string => typeof g === "string" && g.length > 0);
     },
     parameters: workflowToolSchema,
@@ -205,8 +223,23 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
       return normalizeWorkflowToolArgs(args);
     },
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const { script } = resolveWorkflowSource(params, storage, cwd, ctx);
-      const parsed = parseWorkflowScript(script);
+      const source = resolveWorkflowSource(params, storage, cwd, ctx);
+      let script = source.script;
+      let parsed = parseWorkflowScript(script);
+      if (options.reviewLaunch) {
+        const review = await options.reviewLaunch({
+          script,
+          sourcePath: source.sourcePath,
+          workflowName: parsed.meta.name,
+          ctx,
+        });
+        if (!review.approved) throw new Error("APPROVAL_DENIED: workflow launch was denied");
+        if (review.script !== undefined && review.script !== script) {
+          script = normalizeWorkflowScript(review.script);
+          parsed = parseWorkflowScript(script);
+        }
+      }
+      const hostContext = options.createHostContext?.(ctx, signal);
 
       // Iteration / cached-prefix reuse: resume a prior run with THIS (edited)
       // script instead of creating a brand-new run. Unchanged agent() calls
@@ -215,7 +248,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
       // detached and its result is delivered back into the conversation).
       if (params.resumeFromRunId) {
         const runId = params.resumeFromRunId;
-        const resumed = await manager.resume(runId, { script, args: params.args });
+        const resumed = await manager.resume(runId, { script, args: params.args, hostContext });
         if (!resumed) {
           throw new Error(resumeFailureText(manager, runId));
         }
@@ -247,6 +280,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           agentRetries: params.agentRetries,
           agentTimeoutMs: params.agentTimeoutMs,
           tokenBudget: params.tokenBudget,
+          hostContext,
         });
         return {
           content: [{ type: "text", text: backgroundStartedText(parsed.meta.name, runId) }],
@@ -275,6 +309,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           agentTimeoutMs: params.agentTimeoutMs,
           tokenBudget: params.tokenBudget,
           confirm,
+          hostContext,
           externalSignal: signal,
           onProgress(live) {
             snapshot = recomputeWorkflowSnapshot(live);
@@ -465,22 +500,20 @@ function resolveWorkflowSource(
   cwd: string,
   ctx: unknown,
 ): { script: string; sourcePath?: string } {
-  if (input.scriptPath) {
+  const source = resolveClaudeWorkflowInvocationSource(input);
+  if (source === "scriptPath") {
     const trusted = (ctx as { isProjectTrusted?: () => boolean } | undefined)?.isProjectTrusted?.() ?? false;
     if (!trusted) throw new Error("workflow scriptPath requires a trusted project");
-    const canonical = realpathSync(resolve(cwd, input.scriptPath));
+    const canonical = realpathSync(resolve(cwd, input.scriptPath as string));
     if (extname(canonical).toLowerCase() !== ".js" || !statSync(canonical).isFile()) {
       throw new Error("workflow scriptPath must reference a regular JavaScript file");
     }
     return { script: normalizeWorkflowScript(readFileSync(canonical, "utf8")), sourcePath: canonical };
   }
-  if (input.script) return { script: normalizeWorkflowScript(input.script) };
-  if (input.name) {
-    const saved = storage.load(input.name);
-    if (!saved) throw new Error(`Saved workflow not found: ${input.name}`);
-    return { script: normalizeWorkflowScript(saved.script), sourcePath: saved.path };
-  }
-  throw new Error("workflow requires at least one of `scriptPath`, `script`, or `name`");
+  if (source === "script") return { script: normalizeWorkflowScript(input.script as string) };
+  const saved = storage.load(input.name as string);
+  if (!saved) throw new Error(`Saved workflow not found: ${input.name}`);
+  return { script: normalizeWorkflowScript(saved.script), sourcePath: saved.path };
 }
 
 function normalizeWorkflowScript(script: string): string {

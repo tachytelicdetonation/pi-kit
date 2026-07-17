@@ -134,11 +134,11 @@ In the navigator: `↑/↓` select · `enter/→` open · `esc/←` back · `p` 
 | `parallel(thunks)` | Run `() => agent(...)` thunks concurrently and preserve input order |
 | `pipeline(items, ...stages)` | Fan items through sequential stages |
 | `phase(title, { budget? })` | Group work in the live view and optionally set a phase budget |
-| `verify` / `judgePanel` | Cross-check a result or choose the best candidate |
-| `loopUntilDry` / `completenessCheck` | Repeat discovery until no new findings remain |
-| `workflow(name, args)` | Run a saved workflow inline |
-| `checkpoint(prompt, opts)` | Add a journaled human-approval gate |
-| `budget` | Inspect real tokens spent and remaining |
+| `pi.verify` / `pi.judgePanel` | Cross-check a result or choose the best candidate |
+| `pi.loopUntilDry` / `pi.completenessCheck` | Repeat discovery until no new findings remain |
+| `pi.workflow(name, args)` | Run a saved workflow inline |
+| `pi.checkpoint(prompt, opts)` | Add a journaled human-approval gate |
+| `pi.budget` | Inspect real tokens spent and remaining |
 
 | Agent option | Description |
 | --- | --- |
@@ -147,6 +147,7 @@ In the navigator: `↑/↓` select · `enter/→` open · `esc/←` back · `p` 
 | `agentType` | Named role, tool, and model definition |
 | `isolation` | Use `"worktree"` for conflict-free parallel edits |
 | `schema` | JSON Schema for a validated structured result |
+| `effort` | Per-agent thinking level (`off` through `max`) |
 | `label` / `phase` | Display label and phase override |
 | `timeoutMs` / `retries` | Optional per-agent timeout and recoverable-failure retries |
 
@@ -178,7 +179,7 @@ Runs have no default token budget or per-agent hard timeout. Add `tokenBudget`, 
 
 Extension state lives outside the repository under `~/.pi/workflows`:
 
-- global settings and tiers: `~/.pi/workflows/settings.json` and `model-tiers.json`
+- global settings, tiers, and durable launch approvals: `~/.pi/workflows/settings.json`, `model-tiers.json`, and `approvals.json`
 - project runs, journals, locks, and saved overrides: `~/.pi/workflows/projects/<project>/`
 - older project-local `.pi/workflows/runs` and `.pi/workflows/saved` remain readable as fallbacks
 
@@ -208,8 +209,8 @@ The default `workflow` also matches `workflows`; a custom word matches exactly. 
 
 | Claude Code dynamic workflows | pi-dynamic-workflows on Pi |
 | --- | --- |
-| Code-mode orchestration | JavaScript `agent()` / `parallel()` / `pipeline()` / `phase()` in a VM realm (for determinism, not a security boundary) |
-| Isolated subagent contexts | Fresh in-memory Pi sessions; results remain in variables |
+| Code-mode orchestration | JavaScript `agent()` / `parallel()` / `pipeline()` / `phase()` in a permission-restricted child process |
+| Isolated subagent contexts | Fresh child-process Pi sessions with parent-hosted tools; results remain in variables |
 | Structured outputs | JSON Schema validation with bounded repair |
 | Background runs | Non-blocking run, live panel, and automatic result delivery |
 | Resume | Journaled replay of the unchanged completed prefix, including edit-and-resume with a revised script (`resumeFromRunId`) |
@@ -221,7 +222,7 @@ The default `workflow` also matches `workflows`; a custom word matches exactly. 
 
 ## Determinism and limits
 
-Workflow scripts run in a Node `vm` sandbox. `Date.now()`, `Math.random()`, `new Date()`, `require`, `import`, filesystem access, and network access are unavailable inside the orchestration script. Subagents use their assigned tools; keeping the orchestrator deterministic is what makes journal replay reliable.
+Workflow scripts run in a permission-restricted Node child process with a code-generation-disabled `vm` realm. `Date.now()`, `Math.random()`, `new Date()`, `require`, `import`, direct filesystem access, and direct network access are unavailable inside the orchestration script. Subagents use parent-authorized tools; keeping the orchestrator deterministic is what makes journal replay reliable.
 
 Journal replay — including edit-and-resume via `resumeFromRunId` — matches cached agent results by **positional call index** (the order in which `agent()` calls execute), the same contract Claude Code uses. Editing an `agent()` prompt in place reuses the cache up to that call and re-runs it and everything after. Inserting, removing, or reordering an `agent()` call before others shifts their positions and invalidates the cache from that point on (mismatched calls simply re-run — no crash). To preserve the cached prefix, keep the earlier still-good `agent()` calls unchanged and in the same order.
 

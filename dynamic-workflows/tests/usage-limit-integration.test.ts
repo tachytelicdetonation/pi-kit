@@ -23,6 +23,14 @@ import { withFakeHomeAsync } from "./helpers/fake-home.js";
 
 const USAGE_LIMIT_MSG = "Codex usage limit reached (plus plan). Resets in ~3h.";
 
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for workflow state");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 /**
  * Load the faux provider from the SAME pi-ai instance that pi-coding-agent's
  * createAgentSession dispatches through. pi-coding-agent ships its own nested
@@ -139,7 +147,7 @@ return { a, b }`;
     // Budget refills: agent 2 now succeeds. Resume replays agent 1 from the journal.
     setResponses([fauxAssistantMessage("second-result-text", { stopReason: "stop" })]);
     assert.equal(await manager.resume(runId), true, "the paused run is resumable");
-    await new Promise((r) => setTimeout(r, 100));
+    await waitUntil(() => manager.getRun(runId)?.status === "completed");
 
     const done = manager.getRun(runId);
     assert.equal(done?.status, "completed", "resumed run completes once the limit clears");

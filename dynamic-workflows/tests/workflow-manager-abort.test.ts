@@ -10,6 +10,14 @@ import { withFakeHomeAsync } from "./helpers/fake-home.js";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for workflow state");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 /** Agent runner that reports fixed usage so token accounting is exercised. */
 function fakeAgent(usage: Partial<AgentUsage> = {}, result: unknown = "ok") {
   return {
@@ -364,8 +372,8 @@ test(
     // The original promise will reject (its controller was aborted). Suppress it.
     await origPromise.catch(() => {});
 
-    // Wait for the resumed run to complete
-    await new Promise((r) => setTimeout(r, 50));
+    // Process-isolated orchestration can start more slowly under a concurrent test run.
+    await waitUntil(() => manager.getRun(runId)?.status === "completed");
 
     const finalRun = manager.getRun(runId);
     assert.equal(finalRun?.status, "completed", "resumed run should complete successfully");
@@ -396,7 +404,7 @@ return { a, b }`;
 
     // Let agent 1 complete
     da.resolve("first-result");
-    await new Promise((r) => setTimeout(r, 30));
+    await waitUntil(() => Boolean(manager.listRuns().find((run) => run.runId === runId)?.journal?.length));
 
     // Agent 1 should have completed and been journaled. Pause.
     const paused = manager.pause(runId);
@@ -414,7 +422,7 @@ return { a, b }`;
       assert.equal(resumed, true);
 
       // Wait for resumed run to complete (agent 1 replayed from journal, agent 2 live)
-      await new Promise((r) => setTimeout(r, 50));
+      await waitUntil(() => manager.getRun(runId)?.status === "completed");
 
       const finalRun = manager.getRun(runId);
       assert.equal(finalRun?.status, "completed", "resumed multi-agent run should complete");

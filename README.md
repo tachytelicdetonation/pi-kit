@@ -7,7 +7,7 @@ they can be worked on and installed in parallel.
 | Folder | What it is | Upstream |
 |---|---|---|
 | `pretty/` | Pretty terminal output for built-in tools. Vendored fork + pi-tui require fix. | [`@heyhuynhgiabuu/pi-pretty`](https://github.com/heyhuynhgiabuu/pi-pretty) (MIT) |
-| `dynamic-workflows/` | Clean-room Claude workflow compatibility work. Currently stopped at the Pi host-capability security gate. | [`@quintinshaw/pi-dynamic-workflows`](https://github.com/QuintinShaw/pi-dynamic-workflows/tree/e459fe62d3ef126fabfa89dbd59b49d68c998583) (MIT) |
+| `dynamic-workflows/` | Clean-room Claude workflow compatibility work. Public Pi remains below the host-capability gate; a pinned, tested workflow-capable Pi host can be built locally. | [`@quintinshaw/pi-dynamic-workflows`](https://github.com/QuintinShaw/pi-dynamic-workflows/tree/e459fe62d3ef126fabfa89dbd59b49d68c998583) (MIT) |
 
 Vendored extensions keep the upstream `LICENSE` file and credit the original
 author in their own README; see each folder. Fixes are marked with

@@ -1,0 +1,220 @@
+diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
+index b6792197..8d175f28 100644
+--- a/packages/coding-agent/src/core/agent-session.ts
++++ b/packages/coding-agent/src/core/agent-session.ts
+@@ -89,0 +90 @@ import {
++	type WorkflowHostCapabilities,
+@@ -105 +106 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
+-import { createAllToolDefinitions } from "./tools/index.ts";
++import { allToolNames, createAllToolDefinitions, createToolDefinition, type ToolName } from "./tools/index.ts";
+@@ -890,0 +892,37 @@ export class AgentSession {
++	getWorkflowHostCapabilities(): WorkflowHostCapabilities {
++		return Object.freeze({ executableActiveToolDefinitions: true, cwdAwareBuiltinDefinitions: true });
++	}
++
++	/**
++	 * Get the exact executable definitions for currently active tools, in active order.
++	 * The array is a launch-time snapshot for consumers. Custom, extension, override,
++	 * and MCP definitions retain identity; genuine built-ins are cwd-aware wrappers.
++	 */
++	getActiveToolDefinitions(): readonly ToolDefinition[] {
++		const builtinOptions = {
++			read: { autoResizeImages: this.settingsManager.getImageAutoResize() },
++			bash: {
++				commandPrefix: this.settingsManager.getShellCommandPrefix(),
++				shellPath: this.settingsManager.getShellPath(),
++			},
++		};
++		return this.getActiveToolNames().flatMap((name) => {
++			const entry = this._toolDefinitions.get(name);
++			if (!entry) return [];
++			// Built-ins capture cwd in their execute closures. Return a launch-time
++			// wrapper that rebuilds only genuine built-ins for the execution ctx cwd.
++			// Overrides/custom/MCP definitions preserve their exact executable identity.
++			if (entry.sourceInfo.source === "builtin" && !this._baseToolsOverride && allToolNames.has(name as ToolName)) {
++				const definition = entry.definition;
++				return [{
++					...definition,
++					execute: (toolCallId, params, signal, onUpdate, ctx) => {
++						const rebound = createToolDefinition(name as ToolName, ctx?.cwd ?? this._cwd, builtinOptions);
++						return rebound.execute(toolCallId, params, signal, onUpdate, ctx);
++					},
++				} satisfies ToolDefinition];
++			}
++			return [entry.definition];
++		});
++	}
++
+@@ -2373,0 +2412,2 @@ export class AgentSession {
++				getWorkflowHostCapabilities: () => this.getWorkflowHostCapabilities(),
++				getActiveToolDefinitions: () => this.getActiveToolDefinitions(),
+diff --git a/packages/coding-agent/src/core/extensions/index.ts b/packages/coding-agent/src/core/extensions/index.ts
+index 29847b63..a07a72ff 100644
+--- a/packages/coding-agent/src/core/extensions/index.ts
++++ b/packages/coding-agent/src/core/extensions/index.ts
+@@ -82,0 +83 @@ export type {
++	GetActiveToolDefinitionsHandler,
+@@ -84,0 +86 @@ export type {
++	GetWorkflowHostCapabilitiesHandler,
+@@ -167,0 +170 @@ export type {
++	WorkflowHostCapabilities,
+diff --git a/packages/coding-agent/src/core/extensions/loader.ts b/packages/coding-agent/src/core/extensions/loader.ts
+index 01524d2b..4fbe0758 100644
+--- a/packages/coding-agent/src/core/extensions/loader.ts
++++ b/packages/coding-agent/src/core/extensions/loader.ts
+@@ -187,0 +188,2 @@ export function createExtensionRuntime(): ExtensionRuntime {
++		getWorkflowHostCapabilities: notInitialized,
++		getActiveToolDefinitions: notInitialized,
+@@ -335,0 +338,10 @@ function createExtensionAPI(
++		getWorkflowHostCapabilities() {
++			runtime.assertActive();
++			return runtime.getWorkflowHostCapabilities();
++		},
++
++		getActiveToolDefinitions() {
++			runtime.assertActive();
++			return runtime.getActiveToolDefinitions();
++		},
++
+diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
+index 1250868d..4793b2ce 100644
+--- a/packages/coding-agent/src/core/extensions/runner.ts
++++ b/packages/coding-agent/src/core/extensions/runner.ts
+@@ -326,0 +327,2 @@ export class ExtensionRunner {
++		this.runtime.getWorkflowHostCapabilities = actions.getWorkflowHostCapabilities;
++		this.runtime.getActiveToolDefinitions = actions.getActiveToolDefinitions;
+diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
+index 9ce96938..0f61702f 100644
+--- a/packages/coding-agent/src/core/extensions/types.ts
++++ b/packages/coding-agent/src/core/extensions/types.ts
+@@ -1302,0 +1303,9 @@ export interface ExtensionAPI {
++	/** Capabilities required by process-isolated workflow hosts. */
++	getWorkflowHostCapabilities(): WorkflowHostCapabilities;
++
++	/**
++	 * Get the exact executable definitions for currently active tools, in active order.
++	 * The returned array is a snapshot; definitions retain executable identity.
++	 */
++	getActiveToolDefinitions(): readonly ToolDefinition[];
++
+@@ -1528,0 +1538,9 @@ export type GetActiveToolsHandler = () => string[];
++export interface WorkflowHostCapabilities {
++	readonly executableActiveToolDefinitions: true;
++	readonly cwdAwareBuiltinDefinitions: true;
++}
++
++export type GetWorkflowHostCapabilitiesHandler = () => WorkflowHostCapabilities;
++
++export type GetActiveToolDefinitionsHandler = () => readonly ToolDefinition[];
++
+@@ -1583,0 +1602,2 @@ export interface ExtensionActions {
++	getWorkflowHostCapabilities: GetWorkflowHostCapabilitiesHandler;
++	getActiveToolDefinitions: GetActiveToolDefinitionsHandler;
+diff --git a/packages/coding-agent/src/index.ts b/packages/coding-agent/src/index.ts
+index 26757fb8..9edc20e3 100644
+--- a/packages/coding-agent/src/index.ts
++++ b/packages/coding-agent/src/index.ts
+@@ -130,0 +131 @@ export type {
++	WorkflowHostCapabilities,
+diff --git a/packages/coding-agent/test/agent-session-dynamic-tools.test.ts b/packages/coding-agent/test/agent-session-dynamic-tools.test.ts
+index 88871ac8..b00a400e 100644
+--- a/packages/coding-agent/test/agent-session-dynamic-tools.test.ts
++++ b/packages/coding-agent/test/agent-session-dynamic-tools.test.ts
+@@ -1 +1 @@
+-import { existsSync, mkdirSync, rmSync } from "node:fs";
++import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+@@ -6,0 +7,2 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import type { AgentSession } from "../src/core/agent-session.ts";
++import type { ToolDefinition } from "../src/core/extensions/types.ts";
+@@ -96,0 +99,81 @@ describe("AgentSession dynamic tool registration", () => {
++	it("exposes exact executable definitions for active tools through ExtensionAPI", async () => {
++		const settingsManager = SettingsManager.create(tempDir, agentDir);
++		const sessionManager = SessionManager.inMemory();
++		let captured: readonly ToolDefinition[] | undefined;
++		let capabilities: ReturnType<AgentSession["getWorkflowHostCapabilities"]> | undefined;
++		const sdkTool: ToolDefinition = {
++			name: "sdk_tool",
++			label: "SDK Tool",
++			description: "Executable SDK tool",
++			parameters: Type.Object({}),
++			execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
++		};
++		const resourceLoader = new DefaultResourceLoader({
++			cwd: tempDir,
++			agentDir,
++			settingsManager,
++			extensionFactories: [
++				(pi) => {
++					pi.on("session_start", () => {
++						capabilities = pi.getWorkflowHostCapabilities();
++						captured = pi.getActiveToolDefinitions();
++					});
++				},
++			],
++		});
++		await resourceLoader.reload();
++
++		const { session } = await createAgentSession({
++			cwd: tempDir,
++			agentDir,
++			model: getModel("anthropic", "claude-sonnet-4-5")!,
++			settingsManager,
++			sessionManager,
++			resourceLoader,
++			tools: ["sdk_tool"],
++			customTools: [sdkTool],
++		});
++		await session.bindExtensions({});
++
++		expect(capabilities).toEqual({ executableActiveToolDefinitions: true, cwdAwareBuiltinDefinitions: true });
++		expect(captured?.map((tool) => tool.name)).toEqual(["sdk_tool"]);
++		expect(captured?.[0]).toBe(sdkTool);
++		expect(captured?.[0]?.execute).toBe(sdkTool.execute);
++		const launchSnapshot = captured;
++		session.setActiveToolsByName([]);
++		expect(launchSnapshot?.map((tool) => tool.name)).toEqual(["sdk_tool"]);
++		expect(session.getActiveToolDefinitions()).toEqual([]);
++
++		session.dispose();
++	});
++
++	it("rebinds built-in executable definitions to the execution context cwd", async () => {
++		const alternateCwd = join(tempDir, "alternate");
++		mkdirSync(alternateCwd, { recursive: true });
++		writeFileSync(join(alternateCwd, "only-there.txt"), "alternate cwd");
++		const settingsManager = SettingsManager.create(tempDir, agentDir);
++		const resourceLoader = new DefaultResourceLoader({ cwd: tempDir, agentDir, settingsManager });
++		await resourceLoader.reload();
++		const { session } = await createAgentSession({
++			cwd: tempDir,
++			agentDir,
++			model: getModel("anthropic", "claude-sonnet-4-5")!,
++			settingsManager,
++			sessionManager: SessionManager.inMemory(tempDir),
++			resourceLoader,
++			tools: ["read"],
++		});
++
++		const read = session.getActiveToolDefinitions().find((tool) => tool.name === "read");
++		expect(read).toBeDefined();
++		const result = await read!.execute(
++			"call",
++			{ path: "only-there.txt" },
++			undefined,
++			undefined,
++			{ cwd: alternateCwd } as never,
++		);
++		expect(result.content).toContainEqual({ type: "text", text: "alternate cwd" });
++		session.dispose();
++	});
++
+diff --git a/packages/coding-agent/test/extensions-runner.test.ts b/packages/coding-agent/test/extensions-runner.test.ts
+index 69f20be9..2f19520a 100644
+--- a/packages/coding-agent/test/extensions-runner.test.ts
++++ b/packages/coding-agent/test/extensions-runner.test.ts
+@@ -81,0 +82,5 @@ describe("ExtensionRunner", () => {
++		getWorkflowHostCapabilities: () => ({
++			executableActiveToolDefinitions: true,
++			cwdAwareBuiltinDefinitions: true,
++		}),
++		getActiveToolDefinitions: () => [],

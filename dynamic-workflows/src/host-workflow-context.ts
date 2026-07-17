@@ -1,5 +1,5 @@
 import type { Model } from "@earendil-works/pi-ai";
-import type { ExtensionUIContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ExtensionUIContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 export type WorkflowInputOrigin = "interactive" | "rpc" | "extension" | "print" | "json";
 export type WorkflowHostMode = "tui" | "rpc" | "json" | "print";
@@ -41,6 +41,8 @@ export interface HostWorkflowContext {
   readonly projectTrusted: boolean;
   readonly permissionMode: WorkflowPermissionMode;
   readonly permissionBroker: WorkflowPermissionBroker;
+  /** Parent invocation context used only when executing snapshotted proxy tools. */
+  readonly toolExecutionContext?: ExtensionContext;
   readonly uiBroker?: ExtensionUIContext;
   readonly abortSignal?: AbortSignal;
 }
@@ -92,6 +94,7 @@ export function createHostWorkflowContext(options: CreateHostWorkflowContextOpti
     projectTrusted: options.projectTrusted,
     permissionMode: options.permissionMode,
     permissionBroker: options.permissionBroker,
+    toolExecutionContext: options.toolExecutionContext,
     uiBroker: options.uiBroker,
     abortSignal: options.abortSignal,
   });

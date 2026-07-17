@@ -2,14 +2,16 @@
  * Configuration constants for pi-dynamic-workflows.
  */
 
+import { CLAUDE_WORKFLOW_CONTRACT } from "./claude-workflow-contract.js";
+
 /** Maximum number of agents allowed per workflow run. */
-export const MAX_AGENTS_PER_RUN = 1000;
+export const MAX_AGENTS_PER_RUN = CLAUDE_WORKFLOW_CONTRACT.runtime.maximumAgentsPerRun;
 
 /** Default timeout for a single agent in milliseconds. null means no hard timeout. */
 export const DEFAULT_AGENT_TIMEOUT_MS = null;
 
-/** Maximum concurrent agents (matches Claude Code limit). */
-export const MAX_CONCURRENCY = 16;
+/** Maximum concurrent agents, matching Claude Code's limit. */
+export const MAX_CONCURRENCY = CLAUDE_WORKFLOW_CONTRACT.runtime.maximumConcurrentAgents;
 
 /** Maximum automatic retry attempts after a recoverable agent failure. */
 export const MAX_AGENT_RETRIES = 3;

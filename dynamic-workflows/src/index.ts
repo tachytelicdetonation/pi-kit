@@ -7,6 +7,21 @@ export { compactAgentHistory } from "./agent-history.js";
 export type { AgentDefinition, AgentRegistry } from "./agent-registry.js";
 export { applyToolPolicy, listAgentTypes, loadAgentRegistry, resolveAgentType } from "./agent-registry.js";
 export { registerBuiltinWorkflows } from "./builtin-commands.js";
+export type {
+  ClaudeWorkflowErrorCategory,
+  ClaudeWorkflowInputOrigin,
+  ClaudeWorkflowInvocationSource,
+  ClaudeWorkflowLifecycleState,
+  ClaudeWorkflowPermissionMode,
+} from "./claude-workflow-contract.js";
+export {
+  CLAUDE_WORKFLOW_CONTRACT,
+  CLAUDE_WORKFLOW_ORACLE_VERSION,
+  canTransitionClaudeWorkflow,
+  resolveClaudeWorkflowInvocationSource,
+  shouldTriggerClaudeWorkflowKeyword,
+  shouldWarnForLargeClaudeWorkflow,
+} from "./claude-workflow-contract.js";
 export { generateCodeReviewWorkflow, MAX_DIFF_CHARS } from "./code-review.js";
 export * from "./config.js";
 export type { DeepResearchConfig } from "./deep-research.js";
@@ -43,6 +58,20 @@ export {
   WorkflowErrorCode,
   wrapError,
 } from "./errors.js";
+export type {
+  CreateHostWorkflowContextOptions,
+  HostWorkflowContext,
+  WorkflowHostMode,
+  WorkflowInputOrigin,
+  WorkflowPermissionBroker,
+  WorkflowPermissionDecision,
+  WorkflowPermissionMode,
+  WorkflowPermissionRequest,
+  WorkflowThinkingLevel,
+} from "./host-workflow-context.js";
+export { createHostWorkflowContext, HostWorkflowCapabilityError } from "./host-workflow-context.js";
+export type { InheritedToolExecutionRequest, InheritedToolExecutionUpdate } from "./inherited-tool-host.js";
+export { InheritedToolHost } from "./inherited-tool-host.js";
 export type { WorkflowLogger, WorkflowLoggerOptions } from "./logger.js";
 export { createWorkflowLogger } from "./logger.js";
 export type { ModelRoute, ModelRoutingConfig } from "./model-routing.js";
@@ -66,6 +95,8 @@ export {
   saveModelTierConfig,
   sortedTierNames,
 } from "./model-tier-config.js";
+export type { ProcessWorkflowAgentOptions } from "./process-agent.js";
+export { ProcessWorkflowAgent } from "./process-agent.js";
 export type { PersistedRunState, RunPersistence, RunStatus } from "./run-persistence.js";
 export { createRunPersistence, generateRunId } from "./run-persistence.js";
 export {
@@ -95,6 +126,19 @@ export type {
   WorkflowRunResult,
 } from "./workflow.js";
 export { parseWorkflowScript, runWorkflow } from "./workflow.js";
+export type {
+  StoredWorkflowApproval,
+  WorkflowApprovalIdentity,
+  WorkflowApprovalStore,
+  WorkflowLaunchApprovalAction,
+  WorkflowLaunchApprovalContext,
+  WorkflowLaunchApprovalRequirement,
+} from "./workflow-approval.js";
+export {
+  canonicalWorkflowApprovalIdentity,
+  createWorkflowApprovalStore,
+  workflowLaunchApprovalRequirement,
+} from "./workflow-approval.js";
 export { registerWorkflowCommands } from "./workflow-commands.js";
 export {
   buildForcedWorkflowPrompt,
@@ -121,6 +165,17 @@ export {
   workflowProjectPaths,
   workflowUserSavedDir,
 } from "./workflow-paths.js";
+export type {
+  ParentRoutedPermissionBrokerOptions,
+  WorkflowPermissionPolicy,
+  WorkflowPermissionPolicyDecision,
+} from "./workflow-permission-broker.js";
+export {
+  createParentRoutedPermissionBroker,
+  ParentRoutedPermissionBroker,
+} from "./workflow-permission-broker.js";
+export type { WorkflowSandboxHandlers, WorkflowSandboxRunOptions } from "./workflow-sandbox.js";
+export { runWorkflowSandbox } from "./workflow-sandbox.js";
 export type { SavedWorkflow, WorkflowStorage } from "./workflow-saved.js";
 export { assertSafeSavedWorkflowName, createWorkflowStorage, isSafeSavedWorkflowName } from "./workflow-saved.js";
 export type { WorkflowSettings, WorkflowSettingsOptions, WorkflowSettingsStore } from "./workflow-settings.js";

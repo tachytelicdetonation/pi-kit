@@ -79,6 +79,45 @@ return xs`;
   assert.equal(result.agentCount, 4);
 });
 
+test("agent timeout aborts and settles an attempt before retrying", async () => {
+  let calls = 0;
+  let active = 0;
+  let maximumActive = 0;
+  const runner = {
+    run(_prompt: string, options: { signal?: AbortSignal }) {
+      calls++;
+      active++;
+      maximumActive = Math.max(maximumActive, active);
+      return new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          active--;
+          resolve("late result");
+        }, 1_000);
+        options.signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            active--;
+            reject(new Error("attempt aborted"));
+          },
+          { once: true },
+        );
+      });
+    },
+  };
+
+  const result = await runWorkflow(
+    `export const meta = { name: 'timeout_cleanup', description: 'timeout cleanup' }
+return await agent('slow', { label: 'slow' })`,
+    { agent: runner, agentTimeoutMs: 10, agentRetries: 1, persistLogs: false },
+  );
+
+  assert.equal(result.result, null);
+  assert.equal(calls, 2);
+  assert.equal(active, 0);
+  assert.equal(maximumActive, 1, "a retry must not overlap its timed-out predecessor");
+});
+
 test("runWorkflow retries recoverable empty output then succeeds", async () => {
   let calls = 0;
   const journal: JournalEntry[] = [];

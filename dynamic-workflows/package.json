@@ -27,6 +27,7 @@
     "test:compat": "tsx scripts/run-compat-tests.ts",
     "compat:capture": "tsx scripts/capture-claude-workflow-oracle.ts",
     "check:host-capabilities": "tsx scripts/check-host-capability-gate.ts",
+    "build:workflow-host": "./scripts/build-workflow-pi-host.sh",
     "check": "biome check .",
     "format": "biome format --write .",
     "lint": "biome lint .",
