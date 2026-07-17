@@ -1,0 +1,40 @@
+{
+  "name": "pi-codex-search",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Google-like agentic web search for Pi, powered by an isolated Codex CLI subprocess",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "codex",
+    "web-search"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/codex-search.ts"
+    ]
+  },
+  "files": [
+    "extensions/",
+    "src/",
+    "README.md"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "npm run check && tsx --test tests/**/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.80.10",
+    "@earendil-works/pi-coding-agent": "0.80.10",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typebox": "^1.0.55",
+    "typescript": "^5.9.0"
+  }
+}
