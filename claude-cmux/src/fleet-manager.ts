@@ -7,10 +7,12 @@ import { collectSurfaceIds, collectWorkspaceIds } from "./cmux-client.js";
 import { checkCompatibility } from "./compatibility.js";
 import type { CmuxEventTail } from "./event-tail.js";
 import type { ClaudeHookStore } from "./hook-store.js";
-import { isClaudeProcess, isProcessAlive } from "./process.js";
+import { findClaudePidsForSession, isManagedClaudeProcess, isProcessAlive } from "./process.js";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { StateStore } from "./state-store.js";
 import { PermissionBroker } from "./permission-broker.js";
 import { ClaudeSessionController } from "./session-controller.js";
-import type { StateStore } from "./state-store.js";
 import type {
   CompatibilityReport,
   FleetTaskInput,
@@ -32,6 +34,7 @@ export class ClaudeFleetManager {
   private startPromise?: Promise<CompatibilityReport>;
   private persistChain = Promise.resolve();
   private reconcilePromise?: Promise<void>;
+  private reconcileAgain = false;
   private broker?: PermissionBroker;
   private removeAckListener?: () => void;
   private removeLifecycleListener?: () => void;
@@ -45,6 +48,10 @@ export class ClaudeFleetManager {
       audit: AuditLog;
       state: StateStore;
       config: OrchestratorConfig;
+      // Present when the manager is one of several per-Pi-session instances under
+      // a shared root. Enables owner-liveness orphan cleanup across instances.
+      instanceId?: string;
+      instancesRoot?: string;
     },
   ) {}
 
@@ -82,6 +89,9 @@ export class ClaudeFleetManager {
       this.compatibility.ok = false;
       return this.compatibility;
     }
+
+    await this.markInstanceOwner();
+    await this.sweepOrphanInstances();
 
     for (const run of await this.options.state.load()) {
       if (run.state !== "terminated") this.runs.set(run.runId, run);
@@ -237,8 +247,22 @@ export class ClaudeFleetManager {
   }
 
   async reconcile(reason: string): Promise<void> {
-    if (this.reconcilePromise) return this.reconcilePromise;
-    this.reconcilePromise = this.reconcileInternal(reason).finally(() => {
+    // A trigger that arrives while a pass is running would otherwise be dropped
+    // (its facts — a newer gap/topology — never examined). Coalesce it: set a
+    // flag and re-run one more pass after the current one, all under a single
+    // in-flight promise so no two passes run concurrently.
+    if (this.reconcilePromise) {
+      this.reconcileAgain = true;
+      return this.reconcilePromise;
+    }
+    this.reconcilePromise = (async () => {
+      let pass = reason;
+      do {
+        this.reconcileAgain = false;
+        await this.reconcileInternal(pass);
+        pass = `${reason}+coalesced`;
+      } while (this.reconcileAgain);
+    })().finally(() => {
       this.reconcilePromise = undefined;
     });
     return this.reconcilePromise;
@@ -262,7 +286,7 @@ export class ClaudeFleetManager {
       if (["terminated", "failed", "exiting"].includes(run.state)) continue;
       const record = run.sessionId ? hookStore.sessions[run.sessionId] : undefined;
       const candidatePid = record?.pid ?? run.pid;
-      const alive = Boolean(candidatePid && isProcessAlive(candidatePid) && (await isClaudeProcess(candidatePid)));
+      const alive = Boolean(candidatePid && (await isManagedClaudeProcess(candidatePid, run.sessionId)));
       const surfaceExists = Boolean((record?.surfaceId ?? run.surfaceId) && surfaceIds.has((record?.surfaceId ?? run.surfaceId) as string));
       const workspaceExists = Boolean(
         (record?.workspaceId ?? run.workspaceId) && workspaceIds.has((record?.workspaceId ?? run.workspaceId) as string),
@@ -304,8 +328,88 @@ export class ClaudeFleetManager {
         controller.fail(error);
       }
     }
+    await this.sweepDuplicateResumes();
     await this.persist();
     await this.options.audit.append({ event: "reconcile.completed", data: { reason, runs: this.runs.size } });
+  }
+
+  // cmux auto-resumes managed sessions on restart and can spawn several
+  // `claude --resume <id>` instances for one session (one per restored surface).
+  // The hook store keeps a single record per session (last writer wins), so every
+  // twin except the bound one is a live interactive agent no run tracks — it can
+  // never be terminated and its hook-record can flap the bound surface/pid. After
+  // reconciliation has settled each run's pid, SIGTERM any live Claude for the
+  // session that is not the bound pid.
+  private async sweepDuplicateResumes(): Promise<void> {
+    for (const run of this.runs.values()) {
+      if (["terminated", "failed", "exiting"].includes(run.state)) continue;
+      // Only sweep once a run is bound to a definite pid — otherwise we cannot
+      // tell the legitimate instance from a duplicate and must leave both alone.
+      if (!run.sessionId || !run.pid) continue;
+      const strays = (await findClaudePidsForSession(run.sessionId)).filter((pid) => pid !== run.pid);
+      for (const pid of strays) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {}
+        await this.options.audit.append({
+          event: "reconcile.duplicate_closed",
+          runId: run.runId,
+          sessionId: run.sessionId,
+          data: { strayPid: pid, boundPid: run.pid },
+        });
+      }
+    }
+  }
+
+  // Records the owning Pi process id so a later Pi process can tell whether this
+  // instance's sessions are still supervised by a live peer or orphaned.
+  private async markInstanceOwner(): Promise<void> {
+    if (!this.options.instanceId || !this.options.instancesRoot) return;
+    const file = join(this.options.instancesRoot, this.options.instanceId, "owner.pid");
+    try {
+      await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+      await writeFile(file, String(process.pid), { encoding: "utf8", mode: 0o600 });
+    } catch {
+      // Best-effort; absence just means peers can't detect our liveness.
+    }
+  }
+
+  // A previous Pi process that crashed or was replaced leaves its per-instance
+  // state file with live, now-unsupervised Claude sessions (no event tail, no
+  // permission broker, no turn timeout). On startup, find sibling instances whose
+  // owner process is dead and terminate their still-live managed Claude
+  // processes and workspaces. A live peer Pi (owner pid alive) is never touched;
+  // PID reuse of a dead owner only causes us to skip cleanup — the safe direction.
+  private async sweepOrphanInstances(): Promise<void> {
+    const root = this.options.instancesRoot;
+    if (!root || !this.options.instanceId) return;
+    let entries: string[];
+    try {
+      entries = await readdir(root);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry === this.options.instanceId) continue;
+      const instanceDir = join(root, entry);
+      const ownerPid = Number((await readFile(join(instanceDir, "owner.pid"), "utf8").catch(() => "")).trim());
+      if (ownerPid && isProcessAlive(ownerPid)) continue;
+      const runs = await new StateStore(join(instanceDir, "state.json")).load().catch(() => []);
+      for (const run of runs) {
+        if (["terminated", "failed", "exiting"].includes(run.state)) continue;
+        if (!run.pid || !(await isManagedClaudeProcess(run.pid, run.sessionId))) continue;
+        try {
+          process.kill(run.pid, "SIGTERM");
+        } catch {}
+        if (run.workspaceId) await this.options.cmux.closeWorkspace(run.workspaceId).catch(() => {});
+        await this.options.audit.append({
+          event: "orphan.terminated",
+          runId: run.runId,
+          sessionId: run.sessionId,
+          data: { instance: entry, pid: run.pid, ownerPid: ownerPid || null },
+        });
+      }
+    }
   }
 
   async shutdown(cleanup: boolean): Promise<void> {

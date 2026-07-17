@@ -4,7 +4,7 @@ import type { CmuxClient } from "./cmux-client.js";
 import type { CmuxEventTail } from "./event-tail.js";
 import { isTopLevelStop, isUserPromptSubmit } from "./event-tail.js";
 import type { ClaudeHookStore } from "./hook-store.js";
-import { isClaudeProcess, isProcessAlive, sleep } from "./process.js";
+import { isManagedClaudeProcess, isProcessAlive, sleep } from "./process.js";
 import { readAssistantOutput, transcriptOffset, truncateOutput } from "./transcript.js";
 import type { HookSessionRecord, ManagedSession, OrchestratorConfig, RunTaskResult, TrustDecider } from "./types.js";
 
@@ -217,12 +217,12 @@ export class ClaudeSessionController {
       }
     }
     await this.waitForPidExit(2_000);
-    if (this.run.pid && isProcessAlive(this.run.pid) && (await isClaudeProcess(this.run.pid))) {
+    if (this.run.pid && (await isManagedClaudeProcess(this.run.pid, this.run.sessionId))) {
       try {
         process.kill(this.run.pid, "SIGTERM");
       } catch {}
       await this.waitForPidExit(2_000);
-      if (isProcessAlive(this.run.pid) && (await isClaudeProcess(this.run.pid))) {
+      if (await isManagedClaudeProcess(this.run.pid, this.run.sessionId)) {
         try {
           process.kill(this.run.pid, "SIGKILL");
         } catch {}

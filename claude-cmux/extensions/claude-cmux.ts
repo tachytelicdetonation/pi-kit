@@ -50,7 +50,8 @@ export default function claudeCmuxExtension(pi: ExtensionAPI) {
   const cmux = new CmuxClient();
   const createManager = (instanceId: string) => {
     const safeId = instanceId.replace(/[^A-Za-z0-9._-]/g, "_");
-    const instanceRoot = join(paths.root, "instances", safeId);
+    const instancesRoot = join(paths.root, "instances");
+    const instanceRoot = join(instancesRoot, safeId);
     return new ClaudeFleetManager({
       cmux,
       events: new CmuxEventTail({ cmuxBin: cmux.bin, cursorFile: join(instanceRoot, "events.seq"), env: cmux.env }),
@@ -58,6 +59,8 @@ export default function claudeCmuxExtension(pi: ExtensionAPI) {
       audit: new AuditLog(paths.auditFile),
       state: new StateStore(join(instanceRoot, "state.json")),
       config,
+      instanceId: safeId,
+      instancesRoot,
     });
   };
   // session_start replaces this bootstrap holder with a manager keyed by Pi's
@@ -108,7 +111,15 @@ export default function claudeCmuxExtension(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", async (_event, ctx) => {
+    // Tear down the prior manager (the bootstrap holder, or a switched-away Pi
+    // session) before replacing it. Otherwise its event-tail child, permission
+    // broker (which would double-reply to PermissionRequests), and reconcile
+    // timers keep running — and could autonomously resume sessions from the old
+    // state file with no UI attached. cleanup=true also terminates that session's
+    // now-unsupervised managed Claude processes.
+    const previous = manager;
     manager = createManager(ctx.sessionManager.getSessionId());
+    await previous.shutdown(true).catch(() => {});
     try {
       const report = await manager.start();
       if (report.ok) {
