@@ -1,29 +1,27 @@
 "use strict";
-/**
- * Glob normalization for FFF glob() (repo-relative paths).
- * Aligns with Pi SDK find: bare *.ts searches under cwd recursively.
- */
+/* pretty: glob-pattern handling for the find/glob tool (repo-relative paths). */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeFindGlobPattern = normalizeFindGlobPattern;
 exports.isLikelyGlobPattern = isLikelyGlobPattern;
-/** Do not collapse double-star-slash-star to single star. */
+
+// Characters that signal a shell/glob pattern rather than a literal name.
+const GLOB_META = /[*?[\]]/;
+
+// Prepare a pattern for the repo-relative glob search. A bare glob such as
+// "*.ts" is anchored under the tree with a recursive "**/" prefix; anything
+// that already carries a path separator (including "**/..." forms) is passed
+// through untouched, and empty/literal input is returned as-is.
 function normalizeFindGlobPattern(pattern) {
-    const p = pattern.trim();
-    if (!p)
-        return p;
-    if (p === "**/*")
-        return "**/*";
-    if (p.includes("/") || p.startsWith("**/"))
-        return p;
-    if (/[*?[\]]/.test(p))
-        return `**/${p}`;
-    return p;
+    const trimmed = pattern.trim();
+    if (!trimmed || trimmed.includes("/")) {
+        return trimmed;
+    }
+    return GLOB_META.test(trimmed) ? `**/${trimmed}` : trimmed;
 }
-/** Patterns where an empty FFF result is suspicious — try SDK find (fd). */
+
+// True when the input actually contains glob metacharacters, meaning an empty
+// result is worth a second look via the SDK find backend.
 function isLikelyGlobPattern(pattern) {
-    const p = pattern.trim();
-    if (!p)
-        return false;
-    return /[*?[\]]/.test(p) || p === "**/*" || p.startsWith("**/");
+    return GLOB_META.test(pattern.trim());
 }
 //# sourceMappingURL=find-glob.js.map

@@ -1,12 +1,10 @@
 "use strict";
 /**
- * Lazy resolver for pi-tui Text constructor.
+ * pi-tui Text component helpers.
  *
- * Returns the real Text class from @earendil-works/pi-tui, or a stub when
- * pi-tui is unavailable (e.g. not in jiti's alias map). This avoids crashing
- * during tool registration when pi-tui isn't aliased.
- *
- * The resolution is cached — the require() call happens at most once.
+ * ZeroText / zeroText are our own zero-height result component. StubText and the
+ * Text-constructor resolver below cover the case where @earendil-works/pi-tui is
+ * not reachable, so tool registration and rendering degrade instead of crashing.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getTextCtor = getTextCtor;
@@ -47,47 +45,41 @@ function zeroText(ctx) {
         return new ZeroText();
     return (state.__kitZero ??= new ZeroText());
 }
-/** No-op stub that satisfies the Text interface so rendering doesn't crash. */
+
+// Minimal component that satisfies the pi-tui Text interface. Used only as the
+// fallback when the real Text class cannot be loaded; it keeps output visible
+// (unstyled) rather than blank, and its invalidate() exists so a resize doesn't
+// crash the container.
 class StubText {
     constructor(text = "") {
         this._text = text;
     }
-    setText(v) {
-        this._text = v ?? "";
+    setText(value) {
+        this._text = value ?? "";
     }
     render(_width) {
-        // Container.render() calls child.render(); return the stored text as
-        // lines so degradation is unstyled-but-visible instead of blank/crashing.
         return String(this._text).split("\n");
     }
     invalidate() {
-        // Container.invalidate() calls child.invalidate() on resize; must exist
-        // or the TUI crashes on the next resize.
+        // no-op: Container.invalidate() calls this on every resize
     }
 }
-// FIX (pi-kit): resolve pi-tui at the TOP LEVEL, not inside resolve().
-// Pi's loader (jiti) only rewrites its `@earendil-works/pi-tui` alias for static
-// top-level require() calls — never for function-body require(). The original
-// lazy resolve() therefore hit MODULE_NOT_FOUND in EVERY published install and
-// silently fell back to StubText (blank output / the render crash we hit). This
-// matches the working top-level require in tools/read.js.
+
+// pi-tui is resolved once, at module top level. Pi's jiti loader only rewrites
+// its @earendil-works/pi-tui alias for a static top-level require(); a require()
+// inside a function body would fail with MODULE_NOT_FOUND in a published install
+// and silently strand every caller on StubText. When the module (or its Text
+// export) is missing we fall back to StubText.
 const pi_tui_1 = require("@earendil-works/pi-tui");
-const _ctor = pi_tui_1.Text ?? StubText;
-function resolve() {
-    return _ctor;
-}
-/**
- * Returns a Text constructor, always valid. Falls back to StubText if
- * @earendil-works/pi-tui is unavailable (caught and cached).
- */
+const TEXT_CTOR = pi_tui_1.Text ?? StubText;
+
+/** The resolved Text constructor; always a valid class. */
 function getTextCtor() {
-    return resolve();
+    return TEXT_CTOR;
 }
-/**
- * Returns TextComp if provided, otherwise the lazy-resolved Text constructor.
- * Always returns a valid constructor (never undefined/null).
- */
+
+/** `TextComp` when the caller supplies one, otherwise the resolved constructor. */
 function resolveTextCtor(TextComp) {
-    return TextComp ?? resolve();
+    return TextComp ?? TEXT_CTOR;
 }
 //# sourceMappingURL=tui-text.js.map

@@ -1,5 +1,5 @@
 "use strict";
-/* pi-pretty: read tool -- file reading; images are rendered by the host. */
+/* Read tool renderer: displays file contents; image files are left for the host to draw. */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerReadTool = registerReadTool;
 const config_js_1 = require("../config.js");
@@ -36,13 +36,16 @@ function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
                 };
                 return result;
             }
-            const tc = (0, helpers_js_1.normalizeLineEndings)(getText(result));
+            // Regular (non-image) read: normalize newlines, then record the body
+            // and a line count so renderResult can fuse a summary into the header.
+            const body = (0, helpers_js_1.normalizeLineEndings)(getText(result));
+            const startOffset = typeof p.offset === "number" ? p.offset : 0;
             result.details = {
                 _type: "readFile",
                 filePath: String(p.path ?? ""),
-                content: tc,
-                offset: typeof p.offset === "number" ? p.offset : 0,
-                lineCount: tc ? tc.split("\n").length : 0,
+                content: body,
+                offset: startOffset,
+                lineCount: body ? body.split("\n").length : 0,
             };
             return result;
         }),
@@ -122,10 +125,14 @@ function registerReadTool(pi, cwd, _fffService, sdkTool, TextComp) {
         },
     });
 }
+// Gather the text of every text block in a tool result and join them with
+// newlines. Non-text blocks and a missing content array both yield "".
 function getText(result) {
-    return ((result.content ?? [])
-        .filter((c) => c.type === "text")
-        .map((c) => c.text)
-        .join("\n") ?? "");
+    const texts = [];
+    for (const block of result.content ?? []) {
+        if (block.type === "text")
+            texts.push(block.text);
+    }
+    return texts.join("\n");
 }
 //# sourceMappingURL=read.js.map

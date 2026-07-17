@@ -1,5 +1,5 @@
 "use strict";
-/* pi-pretty: ls tool -- directory listing with styled output. */
+/* List tool renderer: directory listing with styled output. */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerLsTool = registerLsTool;
 const config_js_1 = require("../config.js");
@@ -21,12 +21,14 @@ function registerLsTool(pi, cwd, _fffService, sdkTool, TextComp) {
         renderShell: "self",
         execute: (0, metrics_js_1.wrapExecuteWithMetrics)(async (tid, params, sig, _upd, ctx) => {
             const result = (await sdkTool.execute(tid, params, sig, undefined, ctx));
-            const tc = getText(result);
+            // Record the listing text plus an entry count (non-empty lines) that
+            // renderResult fuses into the collapsed header summary.
+            const listing = getText(result);
             result.details = {
                 _type: "lsResult",
-                text: tc,
+                text: listing,
                 path: String(params.path ?? ""),
-                entryCount: tc ? tc.trim().split("\n").filter(Boolean).length : 0,
+                entryCount: listing ? listing.trim().split("\n").filter(Boolean).length : 0,
             };
             return result;
         }),
@@ -92,10 +94,10 @@ function registerLsTool(pi, cwd, _fffService, sdkTool, TextComp) {
         },
     });
 }
+// Collect the text of all text-type blocks in a result, newline-joined.
+// A result with no such blocks (or no content array) produces "".
 function getText(result) {
-    return ((result.content ?? [])
-        .filter((c) => c.type === "text")
-        .map((c) => c.text)
-        .join("\n") ?? "");
+    const texts = (result.content ?? []).flatMap((c) => (c.type === "text" ? [c.text] : []));
+    return texts.join("\n");
 }
 //# sourceMappingURL=ls.js.map

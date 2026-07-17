@@ -3,33 +3,22 @@
 Pretty, information-dense terminal output for Pi's built-in `read` / `bash` /
 `ls` / `find` / `grep` tools.
 
-This is a **vendored fork** of
-[`@heyhuynhgiabuu/pi-pretty`](https://github.com/heyhuynhgiabuu/pi-pretty)
-(v0.6.17, MIT © huynhgiabuu) — all credit for the original design and rendering
-work goes to the author; see [`LICENSE-pi-pretty`](./LICENSE-pi-pretty). It's
-forked so local fixes/redesign survive `pi install`/update (which wipes
-`node_modules` edits) and because the tools didn't actually render on a stock
-install (see below).
+The extension ships as compiled JS in `dist/` (the source of truth) and installs
+as a local path ref so its rendering survives `pi install`/update, which wipes
+`node_modules` edits.
 
-Every change vs upstream is marked with a `FIX (pi-kit):` comment in `dist/`.
+## 1. pi-tui require resolution
 
-## 1. The crash / no-render fix (why the fork exists)
+`@earendil-works/pi-tui` is required at module top level on purpose. Pi's loader
+(jiti) only rewrites its pi-tui alias for a **static, top-level** `require()`, so
+resolving pi-tui inside a function body throws `MODULE_NOT_FOUND` at render time.
+Keeping the requires at the top level (and giving the `StubText` fallback a real
+`render()`/`invalidate()`) is what makes every tool render reliably and keeps a
+terminal resize from crashing the TUI.
 
-Upstream resolved pi-tui with **function-body `require("@earendil-works/pi-tui")`**
-in `dist/tui-text.js` and `dist/render.js`. Pi's loader (jiti) only rewrites its
-pi-tui alias for **static, top-level** `require()`, so those lazy requires threw
-`MODULE_NOT_FOUND` in every published install →
+## 2. The output design
 
-- `read`/`ls`/`find`/`grep` fell back to a stub component and rendered **nothing**;
-- `bash`'s `fillToolBackground()` threw, so it silently fell back to stock rendering;
-- a terminal resize could crash the whole TUI (`child.render is not a function`).
-
-Fixed by moving those requires to the top level (matching upstream's own working
-`tools/read.js`) and completing the `StubText` fallback with `render()`/`invalidate()`.
-
-## 2. The output redesign
-
-A user-centered redesign built on a shared design system (`dist/kit.js`). The
+A user-centered design built on a shared design system (`dist/kit.js`). The
 principle: **the default view answers "did it work · how big · do I care" at a
 glance**, with one fused marker line as the only expand affordance.
 
@@ -44,9 +33,8 @@ glance**, with one fused marker line as the only expand affordance.
 - **grep** — ≤8 matches shown grouped + highlighted; more → a per-file count strip.
 - **ls** — `ls -C` columns, dirs first, with file-type icons.
 - **find** — directory histogram showing where matches cluster.
-- **Shiki** now actually highlights (upstream fed Pi's theme name to Shiki, which
-  isn't a valid Shiki theme → it always fell back to plain text).
-- **Theme-adaptive** palette (dark/light) and full-width background fill fixed.
+- **Shiki** highlighting with a valid theme name so highlighting actually applies.
+- **Theme-adaptive** palette (dark/light) and full-width background fill.
 
 Env knobs: `PRETTY_THEME`, `PRETTY_ICONS=none`, `PRETTY_DISABLE_TOOLS`,
 `PRETTY_ENABLE_TOOLS`, `PRETTY_MAX_PREVIEW_LINES`.
@@ -55,12 +43,6 @@ Env knobs: `PRETTY_THEME`, `PRETTY_ICONS=none`, `PRETTY_DISABLE_TOOLS`,
 
 ```bash
 pi install /Users/tanmaydeshmukh/Projects/pi-kit/pretty
-pi remove npm:@heyhuynhgiabuu/pi-pretty   # drop the broken direct install
 ```
 
 Run `/reload` in Pi. Preview the rendering without Pi via `node ../preview.js`.
-
-## Re-syncing from upstream
-
-Re-copy upstream `dist/` over `./dist/`, then re-apply the `FIX (pi-kit):`-marked
-edits (grep for them). Keeping the fork as a plain `dist/` copy makes that a diff.

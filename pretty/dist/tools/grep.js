@@ -1,5 +1,5 @@
 "use strict";
-/* pi-pretty: grep tool -- FFF-backed text search with SDK fallback. */
+/* Grep tool renderer: FFF-backed text search, falling back to the SDK. */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerGrepTool = registerGrepTool;
 const config_js_1 = require("../config.js");
@@ -19,17 +19,14 @@ function registerGrepTool(pi, cwd, _fffService, sdkTool, TextComp) {
         parameters: sdkTool.parameters,
         renderShell: "self",
         execute: (0, metrics_js_1.wrapExecuteWithMetrics)(async (tid, params, sig, _upd, ctx) => {
-            const p = params;
-            const pattern = String(p.pattern ?? "");
-            const result = (await sdkTool.execute(tid, p, sig, undefined, ctx));
-            for (const c of (result.content ?? [])) {
-                if (c.type === "text")
-                    c.text = (0, helpers_js_1.normalizeLineEndings)(c.text);
-            }
-            const tc = (result.content ?? [])
-                .filter((c) => c.type === "text")
-                .map((c) => c.text)
-                .join("\n") ?? "";
+            const pattern = String(params.pattern ?? "");
+            const result = (await sdkTool.execute(tid, params, sig, undefined, ctx));
+            // Normalize CRLF in each text block IN PLACE so both the details text
+            // and any later read of result.content see the same line endings.
+            const textBlocks = (result.content ?? []).filter((c) => c.type === "text");
+            for (const c of textBlocks)
+                c.text = (0, helpers_js_1.normalizeLineEndings)(c.text);
+            const tc = textBlocks.map((c) => c.text).join("\n");
             result.details = {
                 _type: "grepResult",
                 text: tc,

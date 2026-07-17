@@ -1,6 +1,6 @@
 "use strict";
 /**
- * pi-pretty: liveness registry — the ONE shared heartbeat behind the spinner.
+ * pretty: liveness registry — the ONE shared heartbeat behind the spinner.
  *
  * A running tool call must FEEL alive: its status glyph animates and (past 3s)
  * its header shows a ticking elapsed seg. Both are driven from here so the seven

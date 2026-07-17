@@ -3,7 +3,7 @@ Provenance: oracle (Fable 5) fundamental-redesign plan consult, 2026-07-16.
 Executes as ROUND 3, AFTER the round-2 workflow `pretty-diff-and-polish` (diff
 renderer + edit/write tools + pathSeg + git-status + gutter) has landed and been
 committed. Decision to adopt the full "render by consequence" redesign as the
-hard default: user, 2026-07-16 (see memory pi-pretty-output-improvements.md).
+hard default: user, 2026-07-16 (see the output-improvements memory notes).
 This doc is the spec a future multi-agent workflow executes directly.
 -->
 

@@ -2,7 +2,7 @@
   "name": "pi-kit-pretty",
   "version": "0.6.17-kit.1",
   "private": true,
-  "description": "Pretty terminal output for Pi — vendored fork of @heyhuynhgiabuu/pi-pretty with the pi-tui require-resolution fix (see README).",
+  "description": "Pretty, information-dense terminal output for Pi's built-in tools.",
   "license": "MIT",
   "main": "dist/index.js",
   "files": [

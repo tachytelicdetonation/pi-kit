@@ -1,6 +1,6 @@
 "use strict";
 /*
- * pi-pretty: bash semantic verdicts (round-4 §3).
+ * pretty: bash semantic verdicts.
  *
  * "Render by CONSEQUENCE." The consequence of `npm test` is a VERDICT, not a
  * tail of stdout. These ordered regex extractors scan the LAST ~15 lines of the

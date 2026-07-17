@@ -1,6 +1,6 @@
 "use strict";
 /**
- * pi-pretty: unified-diff renderer.
+ * pretty: unified-diff renderer.
  *
  * Turns (oldText, newText) into ANSI diff lines that render through the shared
  * design system (kit.gutterLine for the new-side gutter, config BG_ADD/BG_DEL

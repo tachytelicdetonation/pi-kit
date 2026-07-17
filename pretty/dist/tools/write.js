@@ -1,5 +1,5 @@
 "use strict";
-/* pi-pretty: write tool -- renders a newly written file as an all-additions diff. */
+/* pretty: write tool -- renders a newly written file as an all-additions diff. */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerWriteTool = registerWriteTool;
 const config_js_1 = require("../config.js");

@@ -1,34 +1,32 @@
 "use strict";
-/**
- * pi-pretty: tool metrics wrapper — elapsed time + output size.
- *
- * Wraps execute functions to record performance metadata in result.details.
- */
+// Wraps a tool's execute function so every run reports its own cost: the
+// wrapper times the call and stamps the result's `details` with elapsed
+// milliseconds and the character volume of the emitted text, which the
+// renderers later surface to the user.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.wrapExecuteWithMetrics = wrapExecuteWithMetrics;
 const helpers_js_1 = require("../helpers.js");
+// Total printable characters across the result's text blocks. Carriage
+// returns are dropped so counts stay stable regardless of line endings.
+function countTextChars(result) {
+    const blocks = result?.content;
+    if (!Array.isArray(blocks))
+        return 0;
+    return blocks.reduce((total, block) => {
+        if (block?.type !== "text")
+            return total;
+        return total + String(block.text ?? "").replace(/\r/g, "").length;
+    }, 0);
+}
 function wrapExecuteWithMetrics(execute) {
     return async (tid, params, sig, upd, ctx) => {
-        const start = performance.now();
+        const startedAt = performance.now();
         const result = await execute(tid, params, sig, upd, ctx);
-        const elapsedMs = performance.now() - start;
-        const details = (result.details ?? {});
-        details[helpers_js_1.ELAPSED_KEY] = elapsedMs;
-        details[helpers_js_1.CHARS_KEY] = getOutputCharCount(result);
+        const details = result.details ?? {};
+        details[helpers_js_1.ELAPSED_KEY] = performance.now() - startedAt;
+        details[helpers_js_1.CHARS_KEY] = countTextChars(result);
         result.details = details;
         return result;
     };
-}
-function getOutputCharCount(result) {
-    const content = result.content;
-    if (!Array.isArray(content))
-        return 0;
-    let length = 0;
-    for (const block of content) {
-        if (block.type !== "text")
-            continue;
-        length += String(block.text ?? "").replace(/\r/g, "").length;
-    }
-    return length;
 }
 //# sourceMappingURL=metrics.js.map

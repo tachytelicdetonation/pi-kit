@@ -1,5 +1,5 @@
 "use strict";
-/* pi-pretty: bash tool -- command execution with styled output. */
+/* Bash tool renderer: runs shell commands and styles their output. */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerBashTool = registerBashTool;
 const config_js_1 = require("../config.js");
@@ -29,13 +29,15 @@ function registerBashTool(pi, _cwd, _fffService, sdkTool, TextComp) {
                 return (await sdkTool.execute(tid, params, sig, undefined, ctx));
             }
             catch (error) {
-                const msg = error instanceof Error ? error.message : String(error);
+                // A throw (spawn failure, etc.) becomes a failed bashResult so the
+                // renderer still has a message and a nonzero exit code to show.
+                const message = error instanceof Error ? error.message : String(error);
                 return {
-                    content: [{ type: "text", text: msg }],
+                    content: [{ type: "text", text: message }],
                     isError: true,
                     details: {
                         _type: "bashResult",
-                        text: msg,
+                        text: message,
                         exitCode: 1,
                         command: String(params.command ?? ""),
                     },
@@ -218,10 +220,11 @@ function colorizeDiffLines(lines) {
         return l;
     });
 }
+// Fold the text blocks of a tool result into one newline-joined string.
+// Blocks without text and an absent content array collapse to "".
 function getText(result) {
-    return ((result.content ?? [])
-        .filter((c) => c.type === "text")
-        .map((c) => c.text)
-        .join("\n") ?? "");
+    return (result.content ?? [])
+        .reduce((acc, c) => (c.type === "text" ? [...acc, c.text] : acc), [])
+        .join("\n");
 }
 //# sourceMappingURL=bash.js.map

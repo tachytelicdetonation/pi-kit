@@ -1,5 +1,5 @@
 "use strict";
-/* pi-pretty: edit tool -- renders an oldText->newText change as a tinted unified diff. */
+/* pretty: edit tool -- renders an oldText->newText change as a tinted unified diff. */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerEditTool = registerEditTool;
 const config_js_1 = require("../config.js");

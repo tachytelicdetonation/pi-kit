@@ -1,5 +1,5 @@
 "use strict";
-/* pi-pretty: find tool -- FFF-backed file search with SDK (fd) fallback. */
+/* Find tool renderer: FFF-backed file search, falling back to the SDK (fd). */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerFindTool = registerFindTool;
 const config_js_1 = require("../config.js");
@@ -11,17 +11,24 @@ const runs = require("../runs.js");
 const metrics_js_1 = require("./metrics.js");
 const node_path_1 = require("node:path");
 const node_child_process_1 = require("node:child_process");
+// Newline-join the text of each text block in a result. A block with no text
+// and a result without a content array both contribute empty output.
 function getText(result) {
-    return (result.content ?? [])
-        .filter((c) => c.type === "text")
-        .map((c) => c.text ?? "")
-        .join("\n");
+    const out = [];
+    for (const c of result.content ?? []) {
+        if (c.type === "text")
+            out.push(c.text ?? "");
+    }
+    return out.join("\n");
 }
+// Run the SDK find and stamp a findResult onto details: the raw path text, the
+// search pattern, a match count (non-empty lines), and the notice list merged
+// from any notices already present plus the caller-supplied extras.
 async function sdkFindAsFindResult(sdkTool, tid, params, sig, ctx, pattern, extraNotices) {
     const result = (await sdkTool.execute(tid, params, sig, undefined, ctx));
     const tc = getText(result);
-    const prev = result.details?.notices ?? [];
-    const notices = [...(Array.isArray(prev) ? prev : []), ...extraNotices];
+    const existing = result.details?.notices;
+    const notices = [...(Array.isArray(existing) ? existing : []), ...extraNotices];
     result.details = {
         _type: "findResult",
         text: tc,
