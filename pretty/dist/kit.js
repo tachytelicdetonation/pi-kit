@@ -68,7 +68,11 @@ function glyph(ctx) {
         if (ctx.state && !ctx.state.__runStart)
             ctx.state.__runStart = Date.now(); // stamp once for the elapsed seg
         const F = liveness.FRAMES;
-        return `${c.FG_CYAN}${F[liveness.currentFrame() % F.length]}${c.RST}`;
+        // ?? "" guards a mid-edit stale load: pi caches the extension for the whole
+        // session, so a config.js snapshot loaded before FG_CYAN existed would make
+        // this interpolate the literal "undefined" onto every running row until
+        // /reload. Absent the color the spinner just renders uncolored — never text.
+        return `${c.FG_CYAN ?? ""}${F[liveness.currentFrame() % F.length]}${c.RST ?? ""}`;
     }
     const col = s === "err" ? c.FG_RED : s === "ok" ? c.FG_GREEN : c.FG_DIM;
     return `${col}${GLYPHS[s]}${c.RST}`;
