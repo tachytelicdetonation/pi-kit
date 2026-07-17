@@ -1,7 +1,7 @@
 # Host capability gate report
 
 - **Date:** 2026-07-17
-- **Workflow baseline:** `@quintinshaw/pi-dynamic-workflows` 2.14.1, commit `e459fe62d3ef126fabfa89dbd59b49d68c998583`
+- **Workflow baseline:** `@tachytelicdetonation/pi-dynamic-workflows` 2.14.1, commit `e459fe62d3ef126fabfa89dbd59b49d68c998583`
 - **Pi SDK inspected:** `@earendil-works/pi-coding-agent` 0.80.6
 - **Result:** **STOP — FAIL**
 

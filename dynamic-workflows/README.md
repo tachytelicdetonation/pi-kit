@@ -1,29 +1,16 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/QuintinShaw/pi-dynamic-workflows/main/assets/readme/hero.png" width="100%" alt="pi-dynamic-workflows turns one prompt into a routed, resumable, cross-checked fleet of Pi subagents">
-</p>
-
-<p align="center">
-  <a href="https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows"><img src="https://img.shields.io/npm/v/@quintinshaw/pi-dynamic-workflows?color=cb3837&logo=npm" alt="npm version"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
   <a href="https://pi.dev"><img src="https://img.shields.io/badge/for-Pi-7c3aed" alt="Built for Pi"></a>
-</p>
-
-<p align="center">
-  <a href="https://quintinshaw.github.io/pi-dynamic-workflows/">Documentation</a> ·
-  <a href="https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows">npm</a> ·
-  <a href="https://pi.dev/packages/@quintinshaw/pi-dynamic-workflows">Pi package</a>
 </p>
 
 Turn one request into a JavaScript orchestration script that fans work out across isolated subagents, routes each task to the right model, cross-checks the results, and returns one synthesized answer. Intermediate work stays in script variables instead of filling your chat context.
 
 Built for **codebase-wide audits, multi-perspective review, large refactors, and source-checked research**—the jobs that are too broad for one agent and one context window.
 
-![A real pi-dynamic-workflows run showing parallel agents and live progress](https://raw.githubusercontent.com/QuintinShaw/pi-dynamic-workflows/main/docs/media/demo.gif)
-
 ## Start in 30 seconds
 
 ```bash
-pi install npm:@quintinshaw/pi-dynamic-workflows
+pi install npm:@tachytelicdetonation/pi-dynamic-workflows
 ```
 
 Run `/reload` in Pi, then ask naturally:
@@ -37,8 +24,6 @@ Pi writes and starts the workflow in the background. A live panel tracks progres
 Keyword triggering is on by default: use the bounded word **workflow** or **workflows** in a message to force workflow mode, or run `/workflows run <prompt>` explicitly. Identifier-like text and paths such as `myworkflow`, `workflow_name`, and `src/workflow-editor.ts` do not trigger. You can change the keyword with `/workflows-trigger set pi-workflow` or disable it with `/workflows-trigger off`.
 
 ## How it works
-
-![A prompt becomes deterministic orchestration, parallel routed agents, verification, and one result](https://raw.githubusercontent.com/QuintinShaw/pi-dynamic-workflows/main/assets/readme/workflow.png)
 
 1. **Orchestrate** — Pi writes a deterministic JavaScript workflow with `agent()`, `parallel()`, `pipeline()`, and `phase()`.
 2. **Fan out** — fresh subagent sessions run concurrently, optionally on different models or isolated git worktrees.
@@ -152,7 +137,7 @@ In the navigator: `↑/↓` select · `enter/→` open · `esc/←` back · `p` 
 | `label` / `phase` | Display label and phase override |
 | `timeoutMs` / `retries` | Optional per-agent timeout and recoverable-failure retries |
 
-The [full documentation](https://quintinshaw.github.io/pi-dynamic-workflows/) covers every option, structured output, determinism, saved workflows, and operational control.
+The sections below cover every option, structured output, determinism, saved workflows, and operational control.
 
 <details>
 <summary><strong>Model tiers and run controls</strong></summary>
@@ -235,10 +220,6 @@ npm test     # Biome + TypeScript + unit tests
 ```
 
 Features are also verified end-to-end against real Pi subagent sessions before release. See [CONTRIBUTING.md](./CONTRIBUTING.md) to contribute.
-
-## Credits
-
-The code-mode orchestration idea comes from [Michael Livs' original pi-dynamic-workflows](https://github.com/Michaelliv/pi-dynamic-workflows) and Anthropic's [dynamic workflows in Claude Code](https://claude.com/blog/introducing-dynamic-workflows-in-claude-code). This project adds model routing, journaled resume, worktree isolation, measured usage, an interactive TUI, and built-in research and review workflows.
 
 ## License
 

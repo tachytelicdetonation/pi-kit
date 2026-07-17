@@ -22,18 +22,28 @@ import { createAgentStoreTools, SharedStore } from "./shared-store.js";
 import { runWorkflowSandbox } from "./workflow-sandbox.js";
 import { createWorktree, removeWorktree, type Worktree } from "./worktree.js";
 
+/**
+ * A single declared stage of a workflow. `title` is the only required field and
+ * is what agents group under; `detail` is optional prose for the UI, and `model`
+ * routes every agent created while this phase is current.
+ */
 export interface WorkflowMetaPhase {
   title: string;
   detail?: string;
   model?: string;
 }
 
+/**
+ * The `export const meta = {…}` header every workflow script must open with.
+ * `name` and `description` are mandatory identity; `phases` optionally declares
+ * the run's stages, and `model` is the fallback route for any agent whose phase
+ * carries no route and that set no per-agent model/tier.
+ */
 export interface WorkflowMeta {
   name: string;
   description: string;
-  phases?: WorkflowMetaPhase[];
-  /** Default model for agents whose phase has no route and that set no model/tier. */
   model?: string;
+  phases?: WorkflowMetaPhase[];
 }
 
 /** One cached agent() result, keyed by its deterministic call index. */
@@ -244,6 +254,11 @@ export interface CheckpointOptions {
 }
 
 interface RuntimeState {
+  /** Human-readable lines emitted by the script, surfaced live and persisted. */
+  logs: string[];
+  /** Distinct phase titles seen so far, in first-seen order. */
+  phases: string[];
+  /** The phase new agents attach to until the next phase() call moves it. */
   currentPhase?: string;
   /**
    * Per-phase soft sub-budgets carved from the run total: phase title -> the
@@ -253,8 +268,6 @@ interface RuntimeState {
    * agent, so an in-flight wave may overshoot slightly.
    */
   phaseBudgets: Map<string, { budget: number; startSpent: number; warned: boolean }>;
-  logs: string[];
-  phases: string[];
   /** Monotonic, assigned at lexical agent() call time — the stable resume key. */
   callSeq: number;
   /**
@@ -265,10 +278,34 @@ interface RuntimeState {
   firstMiss: number;
 }
 
-type AnyNode = Node & { [key: string]: any; start: number; end: number };
+/**
+ * A parsed acorn node read structurally rather than via typed unions. `start`
+ * and `end` are the byte offsets we splice the meta header out on; every other
+ * child field is reached positionally as the walk descends, so it is typed as an
+ * open bag of `any`.
+ */
+type AstNode = Node & { start: number; end: number } & Record<string, any>;
 
-// Parse-time author hint (fast feedback). The real enforcement is DETERMINISM_PRELUDE.
-const DETERMINISM_BLOCKLIST = /\bDate\s*\.\s*now\b|\bMath\s*\.\s*random\b|\bnew\s+Date\s*\(\s*\)/;
+/**
+ * Globals whose values differ between two runs of the same script. Because
+ * journaled resume replays past calls by position, a script must be a pure
+ * function of its inputs — so wall-clock and RNG entry points are refused. This
+ * is only the fast, parse-time authoring guard; the sandbox prelude is the real
+ * enforcement boundary. The table is the source of truth; the matcher is built
+ * from it so adding a construct never means touching a hand-written alternation.
+ */
+const NON_DETERMINISTIC_GLOBALS: ReadonlyArray<{ label: string; pattern: string }> = [
+  { label: "Date.now()", pattern: String.raw`\bDate\s*\.\s*now\b` },
+  { label: "Math.random()", pattern: String.raw`\bMath\s*\.\s*random\b` },
+  { label: "new Date()", pattern: String.raw`\bnew\s+Date\s*\(\s*\)` },
+];
+
+const nonDeterministicMatcher = new RegExp(NON_DETERMINISTIC_GLOBALS.map((g) => g.pattern).join("|"));
+
+/** True when the script text references any banned non-deterministic global. */
+function usesNonDeterministicGlobal(script: string): boolean {
+  return nonDeterministicMatcher.test(script);
+}
 
 export async function runWorkflow<T = unknown>(
   script: string,
@@ -998,144 +1035,184 @@ export async function runWorkflow<T = unknown>(
   }
 }
 
+/**
+ * Split a workflow script into its validated `meta` header and the executable
+ * body with that header removed. The header must be the very first statement so
+ * the rest of the file is a plain script the sandbox can run; everything about
+ * the header — that it is `export const meta = <literal>` and nothing else — is
+ * checked here before a single agent runs.
+ */
+function rejectScript(message: string): never {
+  throw new WorkflowError(message, WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, { recoverable: false });
+}
+
 export function parseWorkflowScript(script: string): { meta: WorkflowMeta; body: string } {
-  if (DETERMINISM_BLOCKLIST.test(script)) {
-    throw new WorkflowError(
-      "Workflow scripts must be deterministic: Date.now()/Math.random()/new Date() are unavailable",
-      WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
-      { recoverable: false },
-    );
+  if (usesNonDeterministicGlobal(script)) {
+    rejectScript("Workflow scripts must be deterministic: Date.now()/Math.random()/new Date() are unavailable");
   }
 
-  const ast = parse(script, {
+  const program = parse(script, {
     ecmaVersion: "latest",
     sourceType: "module",
     allowAwaitOutsideFunction: true,
     allowReturnOutsideFunction: true,
     ranges: false,
-  }) as AnyNode;
+  }) as AstNode;
 
-  const first = ast.body?.[0] as AnyNode | undefined;
-  if (first?.type !== "ExportNamedDeclaration") {
-    throw new WorkflowError(
-      "`export const meta = { name, description, phases }` must be the first statement in the script",
-      WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
-      { recoverable: false },
-    );
+  const head = (program.body as AstNode[] | undefined)?.[0];
+  if (head?.type !== "ExportNamedDeclaration") {
+    rejectScript("`export const meta = { name, description, phases }` must be the first statement in the script");
   }
 
-  const declaration = first.declaration as AnyNode | null;
-  if (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const") {
-    throw new WorkflowError(
-      "meta export must be `export const meta = ...`",
-      WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
-      {
-        recoverable: false,
-      },
-    );
-  }
-  if (declaration.declarations.length !== 1) {
-    throw new WorkflowError("meta export must declare only `meta`", WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, {
-      recoverable: false,
-    });
+  const decl = head.declaration as AstNode | null;
+  if (decl?.type !== "VariableDeclaration" || decl.kind !== "const") {
+    rejectScript("meta export must be `export const meta = ...`");
   }
 
-  const declarator = declaration.declarations[0] as AnyNode;
-  if (declarator.id?.type !== "Identifier" || declarator.id.name !== "meta") {
-    throw new WorkflowError("meta export must declare `meta`", WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, {
-      recoverable: false,
-    });
-  }
-  if (!declarator.init)
-    throw new WorkflowError("meta must have a literal value", WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, {
-      recoverable: false,
-    });
+  const declarators = decl.declarations as AstNode[];
+  if (declarators.length !== 1) rejectScript("meta export must declare only `meta`");
 
-  const meta = evaluateLiteral(declarator.init, "meta");
+  const binding = declarators[0];
+  const id = binding.id as AstNode | null;
+  if (id?.type !== "Identifier" || id.name !== "meta") rejectScript("meta export must declare `meta`");
+
+  const init = binding.init as AstNode | null;
+  if (!init) rejectScript("meta must have a literal value");
+
+  const meta = readLiteralNode(init, "meta");
   validateMeta(meta);
 
   return {
     meta,
-    body: script.slice(0, first.start) + script.slice(first.end),
+    body: script.slice(0, head.start) + script.slice(head.end),
   };
 }
 
-function evaluateLiteral(node: AnyNode, path: string): unknown {
-  switch (node.type) {
-    case "ObjectExpression": {
-      const out: Record<string, unknown> = {};
-      for (const prop of node.properties as AnyNode[]) {
-        if (prop.type === "SpreadElement") throw new Error(`spread not allowed in ${path}`);
-        if (prop.type !== "Property") throw new Error(`only plain properties allowed in ${path}`);
-        if (prop.computed) throw new Error(`computed keys not allowed in ${path}`);
-        if (prop.kind !== "init" || prop.method) throw new Error(`methods/accessors not allowed in ${path}`);
-        const key = propertyKey(prop.key as AnyNode, path);
-        if (key === "__proto__" || key === "constructor" || key === "prototype") {
-          throw new Error(`reserved key name not allowed in ${path}: ${key}`);
-        }
-        out[key] = evaluateLiteral(prop.value as AnyNode, `${path}.${key}`);
-      }
-      return out;
-    }
-    case "ArrayExpression":
-      return (node.elements as Array<AnyNode | null>).map((element, index) => {
-        if (!element) throw new Error(`sparse arrays not allowed in ${path}`);
-        if (element.type === "SpreadElement") throw new Error(`spread not allowed in ${path}`);
-        return evaluateLiteral(element, `${path}[${index}]`);
-      });
-    case "Literal":
-      return node.value;
-    case "TemplateLiteral":
-      if (node.expressions.length > 0) throw new Error(`template interpolation not allowed in ${path}`);
-      return node.quasis.map((quasi: AnyNode) => quasi.value.cooked ?? quasi.value.raw).join("");
-    case "UnaryExpression":
-      if (node.operator === "-" && node.argument?.type === "Literal" && typeof node.argument.value === "number") {
-        return -node.argument.value;
-      }
-      throw new Error(`only negative-number unary allowed in ${path}`);
-    default:
-      throw new Error(`non-literal node type in ${path}: ${node.type}`);
-  }
+/** Property keys that would let a crafted literal reach the prototype chain. */
+const UNSAFE_META_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * Read one AST node as a JSON-style constant. Dispatch is table-driven: each
+ * supported node kind maps to a reader, and anything without an entry is, by
+ * definition, not a literal. Readers recurse back through this function so the
+ * `path` breadcrumb (`meta.phases[0].title`) is threaded through every level for
+ * precise error messages. Only the constant subset of JS is admitted — no
+ * identifiers, calls, spreads, computed keys, accessors, or interpolation —
+ * which is what keeps the header a static, side-effect-free value.
+ */
+function readLiteralNode(node: AstNode, path: string): unknown {
+  const reader = LITERAL_READERS[node.type as string];
+  if (!reader) throw new Error(`non-literal node type in ${path}: ${node.type}`);
+  return reader(node, path);
 }
 
-function propertyKey(node: AnyNode, path: string): string {
+type LiteralReader = (node: AstNode, path: string) => unknown;
+
+const LITERAL_READERS: Record<string, LiteralReader> = {
+  Literal: (node) => node.value,
+
+  ObjectExpression: (node, path) => {
+    const record: Record<string, unknown> = {};
+    for (const member of node.properties as AstNode[]) {
+      if (member.type === "SpreadElement") throw new Error(`spread not allowed in ${path}`);
+      if (member.type !== "Property") throw new Error(`only plain properties allowed in ${path}`);
+      if (member.computed) throw new Error(`computed keys not allowed in ${path}`);
+      if (member.kind !== "init" || member.method) throw new Error(`methods/accessors not allowed in ${path}`);
+      const key = propertyKey(member.key as AstNode, path);
+      if (UNSAFE_META_KEYS.has(key)) throw new Error(`reserved key name not allowed in ${path}: ${key}`);
+      record[key] = readLiteralNode(member.value as AstNode, `${path}.${key}`);
+    }
+    return record;
+  },
+
+  ArrayExpression: (node, path) =>
+    (node.elements as Array<AstNode | null>).map((element, index) => {
+      if (!element) throw new Error(`sparse arrays not allowed in ${path}`);
+      if (element.type === "SpreadElement") throw new Error(`spread not allowed in ${path}`);
+      return readLiteralNode(element, `${path}[${index}]`);
+    }),
+
+  TemplateLiteral: (node, path) => {
+    if ((node.expressions as unknown[]).length > 0) throw new Error(`template interpolation not allowed in ${path}`);
+    return (node.quasis as AstNode[]).map((quasi) => quasi.value.cooked ?? quasi.value.raw).join("");
+  },
+
+  UnaryExpression: (node, path) => {
+    const arg = node.argument as AstNode | undefined;
+    if (node.operator === "-" && arg?.type === "Literal" && typeof arg.value === "number") return -arg.value;
+    throw new Error(`only negative-number unary allowed in ${path}`);
+  },
+};
+
+/** Resolve a property key node to its string name (identifier or string/number literal). */
+function propertyKey(node: AstNode, path: string): string {
   if (node.type === "Identifier") return node.name;
-  if (node.type === "Literal" && (typeof node.value === "string" || typeof node.value === "number"))
+  if (node.type === "Literal" && (typeof node.value === "string" || typeof node.value === "number")) {
     return String(node.value);
+  }
   throw new Error(`unsupported key type in ${path}: ${node.type}`);
 }
 
+/** Non-empty-string test used for both required meta fields. */
+function isFilledString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+/**
+ * Assert that a decoded literal satisfies the WorkflowMeta contract, narrowing
+ * the caller's `unknown` on success. Enforced: `name`/`description` are non-empty
+ * strings, an optional `model` is a string, and an optional `phases` is an array
+ * whose every entry carries a string `title`. Unknown extra fields are tolerated
+ * so scripts using retired header fields keep parsing.
+ */
 function validateMeta(meta: unknown): asserts meta is WorkflowMeta {
-  if (!meta || typeof meta !== "object") throw new Error("meta must be an object");
-  const value = meta as WorkflowMeta;
-  if (typeof value.name !== "string" || !value.name.trim()) throw new Error("meta.name must be a non-empty string");
-  if (typeof value.description !== "string" || !value.description.trim())
-    throw new Error("meta.description must be a non-empty string");
-  if (value.model !== undefined && typeof value.model !== "string") throw new Error("meta.model must be a string");
-  if (value.phases !== undefined) {
-    if (!Array.isArray(value.phases)) throw new Error("meta.phases must be an array");
-    for (const phase of value.phases) {
-      if (!phase || typeof phase !== "object" || typeof (phase as WorkflowMetaPhase).title !== "string") {
-        throw new Error("each meta phase must have a title string");
-      }
+  if (typeof meta !== "object" || meta === null) throw new Error("meta must be an object");
+  const fields = meta as Record<string, unknown>;
+
+  if (!isFilledString(fields.name)) throw new Error("meta.name must be a non-empty string");
+  if (!isFilledString(fields.description)) throw new Error("meta.description must be a non-empty string");
+  if (fields.model !== undefined && typeof fields.model !== "string") throw new Error("meta.model must be a string");
+
+  if (fields.phases !== undefined) {
+    if (!Array.isArray(fields.phases)) throw new Error("meta.phases must be an array");
+    for (const entry of fields.phases) {
+      const title = (entry as { title?: unknown } | null)?.title;
+      if (typeof title !== "string") throw new Error("each meta phase must have a title string");
     }
   }
 }
 
+/**
+ * Build a concurrency gate that runs at most `limit` tasks at once and queues
+ * the rest FIFO. Modeled as an explicit acquire/release pair: acquiring blocks
+ * on a parked resolver when the pool is full, and releasing wakes exactly one
+ * parked waiter (or just frees the slot when none wait), so the in-flight count
+ * never exceeds the limit and ordering is preserved.
+ */
 function createLimiter(limit: number) {
-  let active = 0;
-  const queue: Array<() => void> = [];
-  const next = () => {
-    active--;
-    queue.shift()?.();
+  let inFlight = 0;
+  const parked: Array<() => void> = [];
+
+  const acquire = async (): Promise<void> => {
+    if (inFlight >= limit) {
+      await new Promise<void>((wake) => {
+        parked.push(wake);
+      });
+    }
+    inFlight++;
   };
-  return async <T>(fn: () => Promise<T>): Promise<T> => {
-    if (active >= limit) await new Promise<void>((resolve) => queue.push(resolve));
-    active++;
+
+  const release = (): void => {
+    inFlight--;
+    parked.shift()?.();
+  };
+
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    await acquire();
     try {
-      return await fn();
+      return await task();
     } finally {
-      next();
+      release();
     }
   };
 }
@@ -1201,8 +1278,14 @@ function isEmptyTextAgentResult(result: unknown, schema: TSchema | undefined): b
   return schema === undefined && typeof result === "string" && result.trim().length === 0;
 }
 
+/**
+ * Rough token count for a value when the provider reports no real usage: serialize
+ * it and charge one token per four characters (the standard ~4-chars/token rule of
+ * thumb). Nullish values serialize as an empty string so they cost a floor of one.
+ */
 function estimateTokens(value: unknown): number {
-  return Math.ceil(JSON.stringify(value ?? "").length / 4);
+  const serialized = JSON.stringify(value ?? "");
+  return Math.ceil(serialized.length / 4);
 }
 
 function normalizeConcurrency(value: unknown): number {

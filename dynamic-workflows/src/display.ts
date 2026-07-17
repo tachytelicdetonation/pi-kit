@@ -4,6 +4,14 @@ import type { AgentHistoryEntry } from "./agent-history.js";
 import type { WorkflowErrorCode } from "./errors.js";
 import type { WorkflowMeta } from "./workflow.js";
 
+// ---------------------------------------------------------------------------
+// Snapshot model
+//
+// A snapshot is the display's read-only view of a running workflow. Every field
+// name below is part of the contract: renderers, the task panel, and the tool
+// output surface all read these by name, so renames here ripple everywhere.
+// ---------------------------------------------------------------------------
+
 export type WorkflowAgentStatus = "queued" | "running" | "done" | "error" | "skipped";
 
 export interface WorkflowAgentSnapshot {
@@ -69,74 +77,81 @@ export interface WorkflowDisplayOptions {
   showResultPreviews?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Token accounting
+//
+// Two token sources coexist and disagree: the provider's structured breakdown
+// (input/output/cacheRead/cacheWrite) and a running scalar estimate (`total` at
+// the run level, `tokens` per agent) that keeps ticking even when the provider
+// stays silent. `tokenFigures` reconciles them into a single {fresh, cacheRead}
+// pair that every surface renders.
+// ---------------------------------------------------------------------------
+
 /**
- * Displayable fresh/cached figures from a usage breakdown and/or a scalar
- * estimate. The token pipeline has two sources that don't always agree: the
- * provider-reported breakdown (input/output/cacheRead/cacheWrite) and a scalar
- * estimate (`total` at run level, `tokens` per agent) that keeps accruing even
- * when the provider reports nothing. Two rules:
- * - `fresh` counts input+output+cacheWrite: cache writes are first-time
- *   ingestion billed at full (or premium) price, so hiding them would
- *   under-report real spend; only cacheRead is the cheap reuse shown apart.
- * - `fresh` is never less than what the estimate can account for after
- *   removing cache reads, so estimate-only providers, cost-only providers
- *   (billed but zero token counts), and mixed runs keep the count the display
- *   showed before the split existed, instead of a false "0 tok".
+ * Reduce a usage breakdown and/or a scalar estimate to displayable fresh vs
+ * cache-read figures.
+ *
+ * - "fresh" bundles input + output + cacheWrite. A cache write is a first-time
+ *   ingestion billed at full (or premium) rates, so folding it into fresh keeps
+ *   spend honest; only cacheRead — the genuinely cheap reuse — is shown apart.
+ * - "fresh" never dips below what the scalar estimate implies once cache reads
+ *   are removed, so estimate-only providers, cost-only providers (charged but
+ *   reporting zero tokens), and mixed runs all keep the figure the display
+ *   showed before this split existed instead of collapsing to a false "0 tok".
  */
 export function tokenFigures(
   usage: Partial<AgentUsage> | undefined,
   scalarTokens?: number,
 ): { fresh: number; cacheRead: number } {
   const cacheRead = usage?.cacheRead ?? 0;
-  const reported = (usage?.input ?? 0) + (usage?.output ?? 0) + (usage?.cacheWrite ?? 0);
+  const breakdown = (usage?.input ?? 0) + (usage?.output ?? 0) + (usage?.cacheWrite ?? 0);
   const estimate = Math.max(scalarTokens ?? 0, usage?.total ?? 0);
-  return { fresh: Math.max(reported, estimate - cacheRead), cacheRead };
+  return { fresh: Math.max(breakdown, estimate - cacheRead), cacheRead };
 }
 
-/** Sum a set of agents into fresh vs cacheRead token totals plus real cost, via {@link tokenFigures}. */
+/** Fold a set of agents into combined fresh/cacheRead token totals plus real cost, via {@link tokenFigures}. */
 export function aggregateAgentUsage(agents: ReadonlyArray<Pick<WorkflowAgentSnapshot, "tokens" | "tokenUsage">>): {
   fresh: number;
   cacheRead: number;
   cost: number;
 } {
-  let fresh = 0;
-  let cacheRead = 0;
-  let cost = 0;
-  for (const a of agents) {
-    const f = tokenFigures(a.tokenUsage, a.tokens);
-    fresh += f.fresh;
-    cacheRead += f.cacheRead;
-    cost += a.tokenUsage?.cost ?? 0;
+  const totals = { fresh: 0, cacheRead: 0, cost: 0 };
+  for (const agent of agents) {
+    const { fresh, cacheRead } = tokenFigures(agent.tokenUsage, agent.tokens);
+    totals.fresh += fresh;
+    totals.cacheRead += cacheRead;
+    totals.cost += agent.tokenUsage?.cost ?? 0;
   }
-  return { fresh, cacheRead, cost };
+  return totals;
 }
 
 /**
- * Format a token count for a display surface: "12.4K tok" on its own, or
- * "89K tok · 3.0M cached" when there were cache reads. The cache segment is shown
- * only when `cacheRead > 0`, so a non-caching provider (or a single-turn agent that
- * never re-reads its cache) reads as a plain "tok" rather than a bare, contextless
- * "fresh". `fmt` adapts the number style per surface (compact in panels, full in
- * the print view).
+ * Render a token figure for one surface: "12.4K tok" alone, or
+ * "89K tok · 3.0M cached" once cache reads exist. The cache clause appears only
+ * when `cacheRead > 0`, so a non-caching provider (or a single-turn agent that
+ * never re-reads its cache) reads as plain "tok" rather than a bare "fresh".
+ * `fmt` picks the number style per surface — compact inside panels, full-width
+ * in the print view.
  */
 export function fmtTokenCount(fresh: number, cacheRead: number, fmt: (n: number) => string): string {
-  const f = fmt(fresh) || "0";
-  return cacheRead > 0 ? `${f} tok · ${fmt(cacheRead)} cached` : `${f} tok`;
+  const freshText = fmt(fresh) || "0";
+  return cacheRead > 0 ? `${freshText} tok · ${fmt(cacheRead)} cached` : `${freshText} tok`;
 }
 
 /**
- * Like {@link fmtTokenCount}, but "" when nothing is known yet (both figures 0),
- * so surfaces omit the segment instead of rendering a false "0 tok" — e.g. for a
- * journal-replayed resume or a run whose agents were all skipped. Every surface
- * should use this rather than re-implementing the zero guard.
+ * {@link fmtTokenCount} guarded for the "nothing known yet" case: returns "" when
+ * both figures are 0, so a surface omits the clause entirely rather than printing
+ * a misleading "0 tok" — e.g. a journal-replayed resume, or a run whose agents
+ * were all skipped. Prefer this over hand-rolling the zero check per surface.
  */
 export function fmtTokenSegment(figures: { fresh: number; cacheRead: number }, fmt: (n: number) => string): string {
-  return figures.fresh + figures.cacheRead > 0 ? fmtTokenCount(figures.fresh, figures.cacheRead, fmt) : "";
+  if (figures.fresh + figures.cacheRead <= 0) return "";
+  return fmtTokenCount(figures.fresh, figures.cacheRead, fmt);
 }
 
 /**
- * "$1.23" from one cent up, four decimals below it, and "<$0.0001" for
- * anything smaller — a real cost never rounds to a zero-looking "$0.00".
+ * "$1.23" at a cent and above, four decimals below that, and "<$0.0001" for
+ * anything tinier — a real cost must never round down to a zero-looking "$0.00".
  */
 export function fmtCost(cost: number): string {
   if (cost > 0 && cost < 0.0001) return "<$0.0001";
@@ -148,22 +163,28 @@ export const fmtFull = (n: number): string => n.toLocaleString();
 
 /** Wall-clock elapsed as a compact stopwatch: "42s", "3m12s", "1h05m". */
 export function fmtDuration(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m${s % 60}s`;
-  const h = Math.floor(m / 60);
-  return `${h}h${String(m % 60).padStart(2, "0")}m`;
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}m${totalSeconds % 60}s`;
+  const hours = Math.floor(totalMinutes / 60);
+  return `${hours}h${String(totalMinutes % 60).padStart(2, "0")}m`;
 }
 
-/** Earliest per-agent start time in a snapshot, or undefined when none stamped. */
+/** The smallest `startedAt` across the given agents, or undefined when none is stamped. */
 function earliestAgentStart(agents: ReadonlyArray<Pick<WorkflowAgentSnapshot, "startedAt">>): number | undefined {
-  let min: number | undefined;
-  for (const a of agents) {
-    if (typeof a.startedAt === "number" && (min === undefined || a.startedAt < min)) min = a.startedAt;
+  let earliest: number | undefined;
+  for (const { startedAt } of agents) {
+    if (typeof startedAt === "number" && (earliest === undefined || startedAt < earliest)) {
+      earliest = startedAt;
+    }
   }
-  return min;
+  return earliest;
 }
+
+// ---------------------------------------------------------------------------
+// Snapshot construction / recomputation
+// ---------------------------------------------------------------------------
 
 export function createWorkflowSnapshot(meta: WorkflowMeta): WorkflowSnapshot {
   return {
@@ -180,11 +201,20 @@ export function createWorkflowSnapshot(meta: WorkflowMeta): WorkflowSnapshot {
 }
 
 export function recomputeWorkflowSnapshot(snapshot: WorkflowSnapshot): WorkflowSnapshot {
-  const runningCount = snapshot.agents.filter((agent) => agent.status === "running").length;
-  const doneCount = snapshot.agents.filter((agent) => agent.status === "done").length;
-  const errorCount = snapshot.agents.filter((agent) => agent.status === "error").length;
+  let runningCount = 0;
+  let doneCount = 0;
+  let errorCount = 0;
+  for (const agent of snapshot.agents) {
+    if (agent.status === "running") runningCount++;
+    else if (agent.status === "done") doneCount++;
+    else if (agent.status === "error") errorCount++;
+  }
   return { ...snapshot, agentCount: snapshot.agents.length, runningCount, doneCount, errorCount };
 }
+
+// ---------------------------------------------------------------------------
+// Display factories (widget + tool-update surfaces)
+// ---------------------------------------------------------------------------
 
 export function createWidgetWorkflowDisplay(
   ctx: Pick<ExtensionContext, "ui" | "hasUI">,
@@ -194,14 +224,13 @@ export function createWidgetWorkflowDisplay(
   const placement = options.placement ?? "belowEditor";
   const showStatus = options.showStatus ?? false;
 
-  // Mutable state captured by the component closure so re-renders
-  // always read the latest snapshot even though the factory ran once.
-  let snapshot: WorkflowSnapshot | undefined;
+  // The factory closes over this mutable pair, so a re-register always renders
+  // the newest snapshot even though the factory itself is built only once.
+  let latest: WorkflowSnapshot | undefined;
   let completed = false;
 
-  // Store the factory so update()/complete() can re-register it to trigger re-render.
   const widgetFactory = (_tui: unknown, theme: Theme) => ({
-    render: () => (snapshot ? renderWorkflowLines(snapshot, options, theme) : []),
+    render: () => (latest ? renderWorkflowLines(latest, options, theme) : []),
     invalidate: () => {},
   });
 
@@ -209,19 +238,21 @@ export function createWidgetWorkflowDisplay(
     ctx.ui.setWidget(key, widgetFactory, { placement });
   }
 
+  // Re-registering the same factory is how we ask the host to re-render.
+  const publish = (snapshot: WorkflowSnapshot, done: boolean) => {
+    latest = snapshot;
+    if (done) completed = true;
+    if (!ctx.hasUI) return;
+    if (showStatus) ctx.ui.setStatus(key, statusLine(snapshot, completed));
+    ctx.ui.setWidget(key, widgetFactory, { placement });
+  };
+
   return {
-    update(s) {
-      snapshot = s;
-      if (!ctx.hasUI) return;
-      if (showStatus) ctx.ui.setStatus(key, statusLine(s, completed));
-      ctx.ui.setWidget(key, widgetFactory, { placement });
+    update(snapshot) {
+      publish(snapshot, false);
     },
-    complete(s) {
-      snapshot = s;
-      completed = true;
-      if (!ctx.hasUI) return;
-      if (showStatus) ctx.ui.setStatus(key, statusLine(s, true));
-      ctx.ui.setWidget(key, widgetFactory, { placement });
+    complete(snapshot) {
+      publish(snapshot, true);
     },
     clear() {
       if (!ctx.hasUI) return;
@@ -237,9 +268,10 @@ export function createToolUpdateWorkflowDisplay(
   options: WorkflowDisplayOptions & { streamToolUpdates?: boolean } = {},
 ): WorkflowDisplay {
   const widget = ctx ? createWidgetWorkflowDisplay(ctx, options) : undefined;
+  // Default to streaming text only when there is no live UI to carry the widget.
   const streamToolUpdates = options.streamToolUpdates ?? !ctx?.hasUI;
 
-  const emit = (snapshot: WorkflowSnapshot, completed = false) => {
+  const emit = (snapshot: WorkflowSnapshot, completed: boolean) => {
     if (streamToolUpdates) {
       onUpdate?.({
         content: [{ type: "text", text: renderWorkflowText(snapshot, completed) }],
@@ -263,27 +295,69 @@ export function createToolUpdateWorkflowDisplay(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+
 /** Minimal theme surface so rendering works without a real Theme (tool output, tests). */
 export interface ThemeLike {
   fg(color: string, text: string): string;
   bold(text: string): string;
 }
 
-/** Identity passthrough for contexts where no theme is available (tool text output). */
-const NO_THEME: ThemeLike = { fg: (_c, t) => t, bold: (t) => t };
+/** Passthrough theme for surfaces with no colors (plain tool text). */
+const NO_THEME: ThemeLike = { fg: (_color, text) => text, bold: (text) => text };
 
-/** The first failed agent's label + short error, or "" when nothing failed yet. */
+/** Per-status count breakdown for a group of agents. */
+interface StatusTally {
+  done: number;
+  running: number;
+  errors: number;
+  skipped: number;
+}
+
+function tallyStatuses(agents: ReadonlyArray<WorkflowAgentSnapshot>): StatusTally {
+  const tally: StatusTally = { done: 0, running: 0, errors: 0, skipped: 0 };
+  for (const agent of agents) {
+    switch (agent.status) {
+      case "done":
+        tally.done++;
+        break;
+      case "running":
+        tally.running++;
+        break;
+      case "error":
+        tally.errors++;
+        break;
+      case "skipped":
+        tally.skipped++;
+        break;
+    }
+  }
+  return tally;
+}
+
+/** The dim "3/5 · 1 running · 2 errors" rollup suffix shared by phase and unphased groups. */
+function rollupSuffix(total: number, tally: StatusTally): string {
+  const running = tally.running ? ` · ${tally.running} running` : "";
+  const errors = tally.errors ? ` · ${tally.errors} errors` : "";
+  const skipped = tally.skipped ? ` · ${tally.skipped} skipped` : "";
+  return ` ${tally.done}/${total}${running}${errors}${skipped}`;
+}
+
+/** The first failed agent's label + short reason, or "" when nothing has failed. */
 function firstFailureText(agents: ReadonlyArray<WorkflowAgentSnapshot>): string {
-  const failed = agents.find((a) => a.status === "error");
+  const failed = agents.find((agent) => agent.status === "error");
   if (!failed) return "";
-  const why = shorten(failed.error ?? failed.errorCode ?? "failed", 60);
-  return `"${shorten(failed.label, 40)}": ${why}`;
+  const reason = shorten(failed.error ?? failed.errorCode ?? "failed", 60);
+  return `"${shorten(failed.label, 40)}": ${reason}`;
 }
 
 /**
- * One collapsed error row per failed agent (the DEFAULT roster is the per-phase
- * rollup — only failures get an individual line so they are never silent).
- * Honors `maxAgents` (caps the error rows) and `showResultPreviews`.
+ * One collapsed row per failed agent. Healthy agents fold into the per-phase
+ * rollup; only failures earn an individual line, so a failure is never silent.
+ * `maxAgents` caps how many failure rows show (oldest overflow summarized), and
+ * `showResultPreviews` appends the agent's preview when present.
  */
 function renderErrorRows(
   agents: ReadonlyArray<WorkflowAgentSnapshot>,
@@ -292,17 +366,17 @@ function renderErrorRows(
   theme: ThemeLike,
   lines: string[],
 ): void {
-  const failed = agents.filter((a) => a.status === "error");
-  const visible = failed.slice(-maxAgents);
-  for (const agent of visible) {
-    const why = agent.error ? ` — ${shorten(agent.error, 60)}` : "";
-    const result = showResultPreviews && agent.resultPreview ? ` — ${agent.resultPreview}` : "";
+  const failed = agents.filter((agent) => agent.status === "error");
+  const shown = failed.slice(-maxAgents);
+  for (const agent of shown) {
+    const reason = agent.error ? ` — ${shorten(agent.error, 60)}` : "";
+    const preview = showResultPreviews && agent.resultPreview ? ` — ${agent.resultPreview}` : "";
     lines.push(
-      theme.fg("error", `    [${agent.id}] ${statusIcon(agent.status)} ${shorten(agent.label, 48)}${why}${result}`),
+      theme.fg("error", `    [${agent.id}] ${statusIcon(agent.status)} ${shorten(agent.label, 48)}${reason}${preview}`),
     );
   }
-  if (failed.length > visible.length)
-    lines.push(theme.fg("dim", `    … ${failed.length - visible.length} earlier failures`));
+  const hidden = failed.length - shown.length;
+  if (hidden > 0) lines.push(theme.fg("dim", `    … ${hidden} earlier failures`));
 }
 
 export function renderWorkflowLines(
@@ -313,30 +387,35 @@ export function renderWorkflowLines(
 ): string[] {
   const maxAgents = options.maxAgents ?? 8;
   const showResultPreviews = options.showResultPreviews ?? false;
+
+  // Header suffix pieces: overall state, elapsed clock, tokens, cost.
   const state =
     snapshot.errorCount > 0
       ? `, ${snapshot.errorCount} errors`
       : snapshot.runningCount > 0
         ? `, ${snapshot.runningCount} running`
         : "";
-  // Build header with token info (and cost when the provider reports it)
+
   const usage = snapshot.tokenUsage;
-  const costInfo = usage?.cost ? ` · ${fmtCost(usage.cost)}` : "";
   const segment = fmtTokenSegment(tokenFigures(usage), fmtFull);
+  const costInfo = usage?.cost ? ` · ${fmtCost(usage.cost)}` : "";
   const tokenInfo = `${segment ? ` · ${segment}` : ""}${costInfo}`;
-  // Wall-clock elapsed, derived from the earliest agent start (the snapshot has no
-  // run-start stamp of its own). Omitted until at least one agent has started.
+
+  // The snapshot carries no run-start stamp, so elapsed is measured from the
+  // earliest agent start and stays hidden until an agent has actually begun.
   const start = earliestAgentStart(snapshot.agents);
   const elapsedInfo = start !== undefined ? ` · ${fmtDuration(now - start)}` : "";
+
   const lines = [
     `${theme.bold(`◆ Workflow: ${snapshot.name}`)} (${snapshot.doneCount}/${snapshot.agentCount} done${state}${elapsedInfo}${tokenInfo})`,
   ];
 
-  // Failures must never be silent: name the first one in red right under the header.
+  // A failure is announced in red directly under the header, never left silent.
   if (snapshot.errorCount > 0) {
     lines.push(theme.fg("error", `  ✗ ${snapshot.errorCount} failed — ${firstFailureText(snapshot.agents)}`));
   }
 
+  // Prefer the declared phase order; fall back to phases discovered on agents.
   const phaseNames = snapshot.phases.length
     ? snapshot.phases
     : unique(snapshot.agents.map((agent) => agent.phase).filter(Boolean) as string[]);
@@ -345,36 +424,23 @@ export function renderWorkflowLines(
   for (const phase of phaseNames) {
     const agents = snapshot.agents.filter((agent) => agent.phase === phase);
     for (const agent of agents) rendered.add(agent);
-    const done = agents.filter((agent) => agent.status === "done").length;
-    const running = agents.filter((agent) => agent.status === "running").length;
-    const errors = agents.filter((agent) => agent.status === "error").length;
-    const skipped = agents.filter((agent) => agent.status === "skipped").length;
-    const complete = agents.length > 0 && done + errors + skipped === agents.length;
-    const marker = running > 0 || (!complete && snapshot.currentPhase === phase) ? "▶" : complete ? "✓" : " ";
-    lines.push(
-      theme.fg("accent", `  ${marker} ${phase}`) +
-        theme.fg(
-          "dim",
-          ` ${done}/${agents.length}${running ? ` · ${running} running` : ""}${errors ? ` · ${errors} errors` : ""}${skipped ? ` · ${skipped} skipped` : ""}`,
-        ),
-    );
-    // Healthy agents collapse into the rollup above; only failures get a row.
+
+    const tally = tallyStatuses(agents);
+    const settled = tally.done + tally.errors + tally.skipped;
+    const complete = agents.length > 0 && settled === agents.length;
+    const active = tally.running > 0 || (!complete && snapshot.currentPhase === phase);
+    const marker = active ? "▶" : complete ? "✓" : " ";
+
+    lines.push(theme.fg("accent", `  ${marker} ${phase}`) + theme.fg("dim", rollupSuffix(agents.length, tally)));
+    // Only failures break out of the rollup into their own rows.
     renderErrorRows(agents, maxAgents, showResultPreviews, theme, lines);
   }
 
+  // Any agent not claimed by a named phase is grouped under "Unphased".
   const unphased = snapshot.agents.filter((agent) => !rendered.has(agent));
   if (unphased.length) {
-    const done = unphased.filter((a) => a.status === "done").length;
-    const running = unphased.filter((a) => a.status === "running").length;
-    const errors = unphased.filter((a) => a.status === "error").length;
-    const skipped = unphased.filter((a) => a.status === "skipped").length;
-    lines.push(
-      theme.fg("accent", "  Unphased") +
-        theme.fg(
-          "dim",
-          ` ${done}/${unphased.length}${running ? ` · ${running} running` : ""}${errors ? ` · ${errors} errors` : ""}${skipped ? ` · ${skipped} skipped` : ""}`,
-        ),
-    );
+    const tally = tallyStatuses(unphased);
+    lines.push(theme.fg("accent", "  Unphased") + theme.fg("dim", rollupSuffix(unphased.length, tally)));
     renderErrorRows(unphased, maxAgents, showResultPreviews, theme, lines);
   }
 
@@ -387,36 +453,41 @@ export function renderWorkflowText(snapshot: WorkflowSnapshot, completed = false
 }
 
 function statusLine(snapshot: WorkflowSnapshot, completed: boolean): string {
-  if (completed) return `workflow ✓ ${snapshot.name}: ${snapshot.doneCount}/${snapshot.agentCount}`;
-  if (snapshot.runningCount > 0)
-    return `workflow ${snapshot.name}: ${snapshot.runningCount} running, ${snapshot.doneCount}/${snapshot.agentCount} done`;
-  return `workflow ${snapshot.name}: ${snapshot.doneCount}/${snapshot.agentCount} done`;
+  const progress = `${snapshot.doneCount}/${snapshot.agentCount}`;
+  if (completed) return `workflow ✓ ${snapshot.name}: ${progress}`;
+  if (snapshot.runningCount > 0) {
+    return `workflow ${snapshot.name}: ${snapshot.runningCount} running, ${progress} done`;
+  }
+  return `workflow ${snapshot.name}: ${progress} done`;
 }
 
+// ---------------------------------------------------------------------------
+// Small formatting helpers
+// ---------------------------------------------------------------------------
+
+const STATUS_ICONS: Record<WorkflowAgentStatus, string> = {
+  queued: "○",
+  running: "●",
+  done: "✓",
+  error: "✗",
+  skipped: "-",
+};
+
 export function statusIcon(status: WorkflowAgentStatus): string {
-  switch (status) {
-    case "queued":
-      return "○";
-    case "running":
-      return "●";
-    case "done":
-      return "✓";
-    case "error":
-      return "✗";
-    case "skipped":
-      return "-";
-  }
+  return STATUS_ICONS[status];
 }
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
 }
 
+/** Collapse whitespace and truncate to `max`, appending "…" when clipped. */
 export function shorten(value: string, max: number): string {
   const text = value.replace(/\s+/g, " ").trim();
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+/** Stringify any value and truncate to `max` (default 80) with a trailing "…" when clipped. */
 export function preview(value: unknown, max = 80): string {
   const text = typeof value === "string" ? value : JSON.stringify(value);
   if (!text) return "";

@@ -414,6 +414,18 @@ export type AgentRunResult<TSchemaDef extends TSchema | undefined> = TSchemaDef 
   : string;
 
 export class WorkflowAgent {
+  /**
+   * Appended to a subagent's prompt whenever a schema is in effect, instructing
+   * the model to end its turn with a single structured_output tool call rather
+   * than a prose answer.
+   */
+  private static readonly STRUCTURED_OUTPUT_CONTRACT = [
+    "Final output contract:",
+    "- End the task with exactly one structured_output tool call; its arguments are this subagent's return value.",
+    "- Do not emit a prose final answer instead of structured_output.",
+    "- Inspect files or run any commands you need first, then call structured_output exactly once as your final action.",
+  ].join("\n");
+
   private readonly cwd: string;
   private readonly baseTools: ToolDefinition[];
   private readonly sessionOptions: Partial<CreateAgentSessionOptions>;
@@ -499,128 +511,81 @@ export class WorkflowAgent {
     options: AgentRunOptions<TSchemaDef> = {},
   ): Promise<AgentRunResult<TSchemaDef>> {
     const capture: StructuredOutputCapture<any> = { called: false, value: undefined };
-    // Per-call cwd (e.g. a worktree) needs coding tools bound to that directory,
-    // since tools capture their cwd at construction and can't be relocated.
     const runCwd = options.cwd ?? this.cwd;
-    const baseTools = runCwd === this.cwd ? this.baseTools : createCodingTools(runCwd);
-    // Apply the agentType tool policy BEFORE adding structured_output, so a
-    // restrictive allowlist never strips the schema tool.
-    const customTools: ToolDefinition[] = applyToolPolicy(
-      [...baseTools, ...(options.tools ?? [])],
-      options.toolNames,
-      options.disallowedToolNames,
-    );
-
-    // System tools bypass the allowlist/denylist filter (e.g. shared-store tools).
-    if (options.systemTools?.length) {
-      customTools.push(...options.systemTools);
-    }
-
-    if (options.schema) {
-      customTools.push(createStructuredOutputTool({ schema: options.schema, capture }) as unknown as ToolDefinition);
-    }
-
-    // Resolve the model spec (explicit model > tier > session default). This
-    // composes with phase-based routing in workflow.ts, which only supplies
-    // options.model when a phase pattern matches — so an explicit model wins.
-    const modelSpec = resolveAgentModelSpec(options, this.mainModel, loadModelTierConfig, () =>
-      warnTierUnconfiguredOnce(this.mainModel, this.getRegistry(options.modelRegistry)),
-    );
-
-    // Resolve a requested model spec to a Model object. Specs use Pi CLI-style
-    // parsing, including an optional :thinking suffix such as gpt-5.5:xhigh.
-    // A given-but-unresolved spec falls back to the session default (with a
-    // warning) rather than failing.
-    const modelRegistry = this.getRegistry(options.modelRegistry);
-    let resolvedModel: Model<any> | undefined;
-    let resolvedThinkingLevel: CreateAgentSessionOptions["thinkingLevel"] | undefined;
-    if (modelSpec) {
-      const resolved = resolveModelSpecWithThinking(modelSpec, modelRegistry);
-      if (resolved.warning) console.warn(`[workflow] ${resolved.warning}`);
-      if (resolved.model) {
-        resolvedModel = resolved.model;
-        resolvedThinkingLevel = resolved.thinkingLevel;
-        options.onModelResolved?.(resolved.resolvedSpec ?? canonicalModelSpec(resolved.model));
-      } else {
-        console.warn(`[workflow] model "${modelSpec}" not found; using session default`);
-        options.onModelFallback?.(modelSpec);
-      }
-    }
+    const customTools = this.assembleTools(runCwd, options, capture);
+    const { model: resolvedModel, thinkingLevel: resolvedThinkingLevel } = this.resolveRunModel(options);
 
     const agentDir = getAgentDir();
-    // Key persisted sessions by the runner's project cwd (this.cwd), NOT the
-    // per-call runCwd: agents working in short-lived git worktrees should still
-    // group under the project's session dir instead of scattering across
-    // temporary worktree paths.
+    // Persisted transcripts are grouped by the runner's project cwd (this.cwd),
+    // not the per-call runCwd, so worktree-scoped agents don't scatter their
+    // sessions across throwaway worktree paths.
     const sessionManager = this.createSessionManager();
+    // A per-run registry overrides the constructor's shared one; see getRegistry().
+    const sessionRegistry = options.modelRegistry ?? this.sharedRegistry;
     const { session } = await createAgentSession({
       cwd: runCwd,
       agentDir,
       sessionManager,
-      // Use real SettingsManager to inherit user's default provider/model settings.
-      // SettingsManager.inMemory() doesn't load ~/.pi/settings.json, so subagents
-      // would fall back to the first available model (e.g. openai-codex) which may
-      // not have valid auth, causing silent empty responses.
+      // A real SettingsManager reads ~/.pi/settings.json, so the subagent inherits
+      // the user's configured default provider/model. The in-memory variant skips
+      // that file and would instead select the first available model (e.g.
+      // openai-codex), which frequently lacks valid auth and returns empty output.
       settingsManager: SettingsManager.create(this.cwd, agentDir),
       customTools,
-      // Per-run modelRegistry wins over the constructor's shared registry
-      // (see getRegistry() precedence above).
-      ...(options.modelRegistry || this.sharedRegistry
-        ? { modelRegistry: options.modelRegistry ?? this.sharedRegistry }
-        : {}),
+      ...(sessionRegistry ? { modelRegistry: sessionRegistry } : {}),
       ...this.sessionOptions,
-      // Per-call model/thinking wins over any sessionOptions defaults.
+      // A per-call model/thinking level takes priority over sessionOptions defaults.
       ...(resolvedModel ? { model: resolvedModel } : {}),
       ...(resolvedThinkingLevel || options.thinkingLevel
         ? { thinkingLevel: resolvedThinkingLevel ?? options.thinkingLevel }
         : {}),
     });
 
-    // Name the persisted session so it's identifiable in session pickers.
-    // Skip when an injected session.sessionManager override won (tests/embedders).
+    // Tag the persisted session so it can be recognized in session pickers. Skipped
+    // when an injected sessionManager override is in play (tests/embedders).
     if (this.persistAgentSessions && !this.sessionOptions.sessionManager && options.sessionName) {
       try {
         sessionManager.appendSessionInfo(options.sessionName);
       } catch {
-        // Naming is best-effort; never fail the run over it.
+        // Session naming is cosmetic; a failure must never abort the run.
       }
     }
 
-    let removeAbortListener: (() => void) | undefined;
-    let removeHistoryListener: (() => void) | undefined;
-    let lastHistoryEmit = 0;
-    const emitHistory = () => options.onHistory?.(compactAgentHistory(session.messages));
-    const maybeEmitHistory = () => {
+    let detachAbort: (() => void) | undefined;
+    let detachHistory: (() => void) | undefined;
+    let lastHistoryAt = 0;
+    const flushHistory = () => options.onHistory?.(compactAgentHistory(session.messages));
+    const throttledHistory = () => {
       if (!options.onHistory) return;
       const now = Date.now();
-      if (now - lastHistoryEmit < 250) return;
-      lastHistoryEmit = now;
-      emitHistory();
+      if (now - lastHistoryAt < 250) return;
+      lastHistoryAt = now;
+      flushHistory();
     };
     try {
       if (options.signal?.aborted) throw new Error("Subagent was aborted");
       if (options.signal) {
         const onAbort = () => void session.abort();
         options.signal.addEventListener("abort", onAbort, { once: true });
-        removeAbortListener = () => options.signal?.removeEventListener("abort", onAbort);
+        detachAbort = () => options.signal?.removeEventListener("abort", onAbort);
       }
       if (options.onHistory) {
-        removeHistoryListener = session.subscribe(() => maybeEmitHistory());
+        detachHistory = session.subscribe(() => throttledHistory());
       }
 
       await session.prompt(this.buildPrompt(prompt, options as AgentRunOptions<any>, Boolean(options.schema)));
 
       if (options.signal?.aborted) throw new Error("Subagent was aborted");
 
-      // The SDK buries a provider usage/quota limit in the assistant message rather
-      // than throwing; detect it here (before the schema/empty-text branches) so it
-      // is classified as a recoverable checkpoint, not a SCHEMA_NONCOMPLIANCE failure
-      // (schema path) or a silent empty-output null (non-schema path).
+      // The SDK does not throw provider usage/quota/rate-limit failures; it records
+      // them on the terminal assistant message. Check for that first — ahead of the
+      // schema and empty-text branches — so it becomes a recoverable checkpoint
+      // instead of a SCHEMA_NONCOMPLIANCE error or a silently-null empty output.
       throwIfProviderLimit(session.messages, options.label);
 
       if (options.schema) {
-        return (await resolveStructuredOutput(session, capture, options.schema, options, (m) =>
-          this.lastAssistantText(m),
+        return (await resolveStructuredOutput(session, capture, options.schema, options, (messages) =>
+          this.lastAssistantText(messages),
         )) as AgentRunResult<TSchemaDef>;
       }
 
@@ -633,58 +598,104 @@ export class WorkflowAgent {
       }
       return text as AgentRunResult<TSchemaDef>;
     } finally {
-      removeAbortListener?.();
-      removeHistoryListener?.();
+      detachAbort?.();
+      detachHistory?.();
       try {
-        emitHistory();
+        flushHistory();
       } catch {
-        // History is diagnostic only; never let it mask the real result/error.
+        // A final history emission is diagnostic only and must not hide the outcome.
       }
-      // Read real usage before disposing — dispose tears down the session state.
       if (options.onUsage) {
         try {
+          // Usage must be read before dispose() tears down the session state.
           const usage = usageFromStats(session.getSessionStats());
           if (usage) options.onUsage(usage);
         } catch {
-          // Usage is best-effort; never let stats failure mask the real result/error.
+          // Usage reporting is best-effort; a stats failure must not hide the outcome.
         }
       }
       session.dispose();
     }
   }
 
-  private buildPrompt(prompt: string, options: AgentRunOptions<any>, structured: boolean): string {
-    const parts = [
-      this.instructions,
-      options.instructions,
-      options.label ? `Task label: ${options.label}` : undefined,
-      prompt,
-    ].filter(Boolean);
-
-    if (structured) {
-      parts.push(
-        [
-          "Final output contract:",
-          "- Your final action MUST be a structured_output tool call.",
-          "- The structured_output arguments are the return value of this subagent.",
-          "- Do not emit a prose final answer instead of structured_output.",
-          "- If you need to inspect files or run commands first, do so, then call structured_output exactly once.",
-        ].join("\n"),
-      );
+  /**
+   * Build the tool set for one run. A per-call cwd gets freshly-constructed coding
+   * tools because tools bind their working directory at construction. The agentType
+   * allowlist/denylist is applied first; the always-available system tools and the
+   * schema's structured_output tool are layered on afterwards so a restrictive
+   * policy can never remove them.
+   */
+  private assembleTools<TSchemaDef extends TSchema | undefined>(
+    runCwd: string,
+    options: AgentRunOptions<TSchemaDef>,
+    capture: StructuredOutputCapture<any>,
+  ): ToolDefinition[] {
+    const base = runCwd === this.cwd ? this.baseTools : createCodingTools(runCwd);
+    const tools: ToolDefinition[] = applyToolPolicy(
+      [...base, ...(options.tools ?? [])],
+      options.toolNames,
+      options.disallowedToolNames,
+    );
+    if (options.systemTools?.length) {
+      tools.push(...options.systemTools);
     }
+    if (options.schema) {
+      tools.push(createStructuredOutputTool({ schema: options.schema, capture }) as unknown as ToolDefinition);
+    }
+    return tools;
+  }
 
-    return parts.join("\n\n");
+  /**
+   * Choose the concrete model (and thinking level) for one run. Precedence is
+   * explicit model > tier > default tier, which composes with workflow.ts phase
+   * routing since that only sets options.model on a phase match. Specs are parsed
+   * Pi-CLI style, honoring an optional :thinking suffix (e.g. gpt-5.5:xhigh); an
+   * unresolvable spec logs a warning and leaves the session default in place.
+   */
+  private resolveRunModel<TSchemaDef extends TSchema | undefined>(
+    options: AgentRunOptions<TSchemaDef>,
+  ): { model?: Model<any>; thinkingLevel?: CreateAgentSessionOptions["thinkingLevel"] } {
+    const registry = this.getRegistry(options.modelRegistry);
+    const spec = resolveAgentModelSpec(options, this.mainModel, loadModelTierConfig, () =>
+      warnTierUnconfiguredOnce(this.mainModel, registry),
+    );
+    if (!spec) return {};
+
+    const resolved = resolveModelSpecWithThinking(spec, registry);
+    if (resolved.warning) console.warn(`[workflow] ${resolved.warning}`);
+    if (!resolved.model) {
+      console.warn(`[workflow] model "${spec}" not found; using session default`);
+      options.onModelFallback?.(spec);
+      return {};
+    }
+    options.onModelResolved?.(resolved.resolvedSpec ?? canonicalModelSpec(resolved.model));
+    return { model: resolved.model, thinkingLevel: resolved.thinkingLevel };
+  }
+
+  private buildPrompt(prompt: string, options: AgentRunOptions<any>, structured: boolean): string {
+    const segments: string[] = [];
+    const append = (segment: string | undefined) => {
+      if (segment) segments.push(segment);
+    };
+
+    append(this.instructions);
+    append(options.instructions);
+    if (options.label) append(`Task label: ${options.label}`);
+    append(prompt);
+    if (structured) append(WorkflowAgent.STRUCTURED_OUTPUT_CONTRACT);
+
+    return segments.join("\n\n");
   }
 
   private lastAssistantText(messages: unknown[]): string {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i] as Partial<AssistantMessage> | undefined;
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index] as Partial<AssistantMessage> | undefined;
       if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
-      const text = message.content
-        .filter((part): part is TextContent => part.type === "text")
-        .map((part) => part.text)
-        .join("");
-      if (text.trim()) return text;
+      const combined = message.content.reduce(
+        (acc, part) => (part.type === "text" ? acc + (part as TextContent).text : acc),
+        "",
+      );
+      if (combined.trim()) return combined;
     }
     return "";
   }

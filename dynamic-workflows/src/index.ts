@@ -1,3 +1,10 @@
+// Public surface of the dynamic-workflows extension.
+//
+// This barrel is the one import point consumers and tests reach for. Every
+// export name and its source path is load-bearing — callers depend on both
+// verbatim — so entries stay sorted by source module (the ordering the linter
+// enforces) rather than grouped by theme.
+
 export type { AdversarialReviewConfig } from "./adversarial-review.js";
 export { generateAdversarialReviewWorkflow, generateMultiPerspectiveWorkflow } from "./adversarial-review.js";
 export type { AgentRunOptions, AgentRunResult, WorkflowAgentOptions } from "./agent.js";

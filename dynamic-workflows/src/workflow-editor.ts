@@ -201,14 +201,14 @@ export function customEditorConstructorArgs(
   // real Pi releases, so it's the safer default. If a third host signature
   // ever shows up, this heuristic needs a new branch — the warning below is
   // meant to surface that instead of silently misconstructing the editor
-  // (see https://github.com/QuintinShaw/pi-dynamic-workflows/issues/72).
+  // (see https://github.com/tachytelicdetonation/pi-kit/issues).
   if (baseEditorCtor.length !== 2 && !warnedUnexpectedArity) {
     warnedUnexpectedArity = true;
     console.warn(
       `[pi-dynamic-workflows] WorkflowEditor: base editor constructor takes ${baseEditorCtor.length} required ` +
         "argument(s), which is neither the known OMP layout (1) nor the known legacy Pi layout (2). Falling back " +
         "to the legacy (tui, theme, keybindings) call — the editor may fail to render on this host. Please report " +
-        "this at https://github.com/QuintinShaw/pi-dynamic-workflows/issues/72.",
+        "this at https://github.com/tachytelicdetonation/pi-kit/issues.",
     );
   }
   return [tui, theme, keybindings];
@@ -294,7 +294,7 @@ export class WorkflowEditor extends CustomEditor {
           "[pi-dynamic-workflows] WorkflowEditor: base editor render() threw; degrading to a minimal, unstyled " +
             "rendering so the app doesn't crash. Workflows-mode highlighting will be unavailable this session. " +
             `Original error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)} ` +
-            "Please report this at https://github.com/QuintinShaw/pi-dynamic-workflows/issues/72.",
+            "Please report this at https://github.com/tachytelicdetonation/pi-kit/issues.",
         );
       }
       lines = this.safeFallbackLines(width);

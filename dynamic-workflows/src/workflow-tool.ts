@@ -166,17 +166,17 @@ export interface WorkflowToolOptions {
 }
 
 export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefinition<typeof workflowToolSchema, any> {
-  const storage = options.storage ?? createWorkflowStorage(options.cwd ?? process.cwd());
   const cwd = options.cwd ?? process.cwd();
-  const defaults = resolveWorkflowToolDefaults(options, cwd);
+  const storage = options.storage ?? createWorkflowStorage(cwd);
+  const runDefaults = resolveWorkflowToolDefaults(options, cwd);
   const manager =
     options.manager ??
     new WorkflowManager({
       cwd: options.cwd,
-      concurrency: defaults.concurrency,
-      loadSavedWorkflow: (name: string) => storage.load(name)?.script,
-      defaultAgentTimeoutMs: defaults.agentTimeoutMs,
-      defaultAgentRetries: defaults.agentRetries,
+      concurrency: runDefaults.concurrency,
+      loadSavedWorkflow: (savedName: string) => storage.load(savedName)?.script,
+      defaultAgentTimeoutMs: runDefaults.agentTimeoutMs,
+      defaultAgentRetries: runDefaults.agentRetries,
     });
 
   return defineTool({
@@ -188,8 +188,10 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
     ].join(" "),
     promptSnippet:
       "Run a deterministic JavaScript workflow. Required script header: export const meta = { name: 'short_snake_case', description: 'non-empty description', phases: [{ title: 'Phase' }] }.",
-    // Lazy accessor: the SDK re-reads definition.promptGuidelines on every
-    // tool-registry refresh, so changes to the agentType registry are reflected.
+    // Defined as a getter because the SDK reads promptGuidelines fresh on each
+    // tool-registry refresh; that lets an updated agentType registry flow
+    // through agentTypeGuideline() into the advertised guidance without
+    // rebuilding the tool.
     get promptGuidelines() {
       return [
         "Use workflow only when the user explicitly asks for a workflow, workflows, fan-out, or multi-agent orchestration.",
@@ -216,63 +218,57 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
         "For workflow, do not assume the parent assistant has repository code context inside subagents; include enough task context and relevant paths in each agent prompt.",
         "For workflow, runs are background by default: the tool returns immediately with a run ID, the turn ends so the user isn't blocked, and the result is delivered back into the conversation when the run finishes. Pass background: false only when you must use the result inline in this same turn (it will block).",
         "For workflow, you may call `await pi.workflow('saved-name', argsObject)` to run a saved workflow inline and use its result; nesting is one level deep only, and the global 16-concurrent / 1000-total caps hold across the nesting.",
-      ].filter((g): g is string => typeof g === "string" && g.length > 0);
+      ].filter((entry): entry is string => Boolean(entry));
     },
     parameters: workflowToolSchema,
-    prepareArguments(args) {
-      return normalizeWorkflowToolArgs(args);
-    },
+    prepareArguments: (args) => normalizeWorkflowToolArgs(args),
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const source = resolveWorkflowSource(params, storage, cwd, ctx);
-      let script = source.script;
+      const resolvedSource = resolveWorkflowSource(params, storage, cwd, ctx);
+      let script = resolvedSource.script;
       let parsed = parseWorkflowScript(script);
+
+      // Vet (and optionally rewrite) an untrusted launch before anything runs.
+      // A denial aborts the call; a returned replacement script is re-normalized
+      // and re-parsed so the rest of execute() works from the approved source.
       if (options.reviewLaunch) {
-        const review = await options.reviewLaunch({
+        const decision = await options.reviewLaunch({
           script,
-          sourcePath: source.sourcePath,
+          sourcePath: resolvedSource.sourcePath,
           workflowName: parsed.meta.name,
           ctx,
         });
-        if (!review.approved) throw new Error("APPROVAL_DENIED: workflow launch was denied");
-        if (review.script !== undefined && review.script !== script) {
-          script = normalizeWorkflowScript(review.script);
+        if (!decision.approved) {
+          throw new Error("APPROVAL_DENIED: workflow launch was denied");
+        }
+        if (decision.script !== undefined && decision.script !== script) {
+          script = normalizeWorkflowScript(decision.script);
           parsed = parseWorkflowScript(script);
         }
       }
+
       const hostContext = options.createHostContext?.(ctx, signal);
 
-      // Iteration / cached-prefix reuse: resume a prior run with THIS (edited)
-      // script instead of creating a brand-new run. Unchanged agent() calls
-      // replay from the prior run's journal; the first edited/new call and
-      // everything after it re-run live. Always background (the resumed run is
-      // detached and its result is delivered back into the conversation).
+      // Cached-prefix iteration. Given a prior run id we replay that run with
+      // this (edited) script rather than opening a new one: byte-identical
+      // agent() calls replay from the run's journal, while the first changed or
+      // newly inserted call — and everything after it — runs live. A resumed run
+      // is always detached/background.
       if (params.resumeFromRunId) {
-        const runId = params.resumeFromRunId;
-        const resumed = await manager.resume(runId, { script, args: params.args, hostContext });
+        const priorRunId = params.resumeFromRunId;
+        const resumed = await manager.resume(priorRunId, { script, args: params.args, hostContext });
         if (!resumed) {
-          throw new Error(resumeFailureText(manager, runId));
+          throw new Error(resumeFailureText(manager, priorRunId));
         }
         return {
-          content: [{ type: "text", text: resumedText(parsed.meta.name, runId) }],
-          details: { runId, background: true, resumedFrom: runId },
+          content: [{ type: "text", text: resumedText(parsed.meta.name, priorRunId) }],
+          details: { runId: priorRunId, background: true, resumedFrom: priorRunId },
         };
       }
 
-      // checkpoint() reaches the human only on a UI-bearing foreground run; a
-      // background run is detached, so checkpoint() falls back to its headless
-      // default. Map a checkpoint to ctx.ui.confirm (a yes/no gate) when available.
-      const uiCtx = ctx as
-        | { hasUI?: boolean; ui?: { confirm?(title: string, message: string): Promise<boolean> } }
-        | undefined;
-      const uiConfirm = uiCtx?.hasUI ? uiCtx.ui?.confirm : undefined;
-      const confirm = uiConfirm
-        ? (promptText: string) => uiConfirm.call(uiCtx?.ui, "Workflow checkpoint", promptText)
-        : undefined;
-
-      // Background execution is the default: return immediately so the turn ends
-      // and the user isn't blocked. The result is delivered back into the
-      // conversation when the run finishes (see installResultDelivery). Only an
-      // explicit `background: false` blocks for the result inline.
+      // Detached execution is the default: start the run, hand back its id, and
+      // let the turn end so the user isn't blocked. The manager feeds the result
+      // back into the conversation once it finishes. Only an explicit
+      // background:false blocks for the result inline (handled below).
       if (params.background ?? true) {
         const { runId } = manager.startInBackground(script, params.args, {
           maxAgents: params.maxAgents,
@@ -288,10 +284,21 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
         };
       }
 
-      // Synchronous execution (blocking) — but routed through the manager so the
-      // run shows up live in the /workflows navigator and the task panel while it
-      // runs, then stays in history afterwards. We still block on the result and
-      // return it inline, so the model gets the full output in the same turn.
+      // Inline blocking path. checkpoint() can only prompt a human when the run
+      // owns UI; a detached run cannot, so it stays headless. Here we bridge
+      // checkpoint() to ctx.ui.confirm (a yes/no gate) whenever the host exposes
+      // one, and leave it undefined otherwise.
+      const uiCtx = ctx as
+        | { hasUI?: boolean; ui?: { confirm?(title: string, message: string): Promise<boolean> } }
+        | undefined;
+      const uiConfirm = uiCtx?.hasUI ? uiCtx.ui?.confirm : undefined;
+      const confirm = uiConfirm
+        ? (promptText: string) => uiConfirm.call(uiCtx?.ui, "Workflow checkpoint", promptText)
+        : undefined;
+
+      // The blocking run still goes through the manager so it appears live in the
+      // /workflows navigator and the task panel and lands in history; we simply
+      // await its result and return it within the same turn.
       let snapshot: WorkflowSnapshot = createWorkflowSnapshot(parsed.meta);
       const display = createToolUpdateWorkflowDisplay(onUpdate, undefined, {
         key: "workflow",
@@ -317,18 +324,22 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           },
         });
       } catch (error) {
-        if (signal?.aborted || (error instanceof WorkflowError && error.code === WorkflowErrorCode.WORKFLOW_ABORTED)) {
-          for (const agent of snapshot.agents) {
-            if (agent.status === "running") {
-              agent.status = "skipped";
-              agent.error = "aborted";
-            }
+        const wasAborted =
+          Boolean(signal?.aborted) ||
+          (error instanceof WorkflowError && error.code === WorkflowErrorCode.WORKFLOW_ABORTED);
+        if (!wasAborted) throw error;
+        // On abort, flip any still-running agents to skipped so the final
+        // snapshot reflects reality, push it to the display, then surface a
+        // clean abort error to the caller.
+        for (const agent of snapshot.agents) {
+          if (agent.status === "running") {
+            agent.status = "skipped";
+            agent.error = "aborted";
           }
-          snapshot = recomputeWorkflowSnapshot(snapshot);
-          display.complete(snapshot);
-          throw new Error("Workflow was aborted");
         }
-        throw error;
+        snapshot = recomputeWorkflowSnapshot(snapshot);
+        display.complete(snapshot);
+        throw new Error("Workflow was aborted");
       }
 
       if (result.agentCount === 0) {
@@ -342,22 +353,16 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
       snapshot = recomputeWorkflowSnapshot(snapshot);
       display.complete(snapshot);
 
-      // Format token usage (include cost when the provider reports it)
+      // Summarize token usage, appending the provider-reported cost when present.
       const tokenSegment = fmtTokenSegment(tokenFigures(result.tokenUsage), fmtFull);
-      const tokenInfo = tokenSegment
-        ? `\n\nToken usage: ${tokenSegment}${result.tokenUsage?.cost ? ` (${fmtCost(result.tokenUsage.cost)})` : ""}`
-        : "";
-
-      const formattedResult =
+      const costSuffix = result.tokenUsage?.cost ? ` (${fmtCost(result.tokenUsage.cost)})` : "";
+      const tokenInfo = tokenSegment ? `\n\nToken usage: ${tokenSegment}${costSuffix}` : "";
+      const resultBlock =
         result.result !== undefined ? `\n\`\`\`json\n${JSON.stringify(result.result, null, 2)}\n\`\`\`` : "";
+      const summaryText = `Workflow **${result.meta.name}** completed with **${result.agentCount}** agent(s).${tokenInfo}\n\n## Result${resultBlock}\n\n${reviseHint(result.runId)}`;
 
       return {
-        content: [
-          {
-            type: "text",
-            text: `Workflow **${result.meta.name}** completed with **${result.agentCount}** agent(s).${tokenInfo}\n\n## Result${formattedResult}\n\n${reviseHint(result.runId)}`,
-          },
-        ],
+        content: [{ type: "text", text: summaryText }],
         details: {
           ...snapshot,
           meta: result.meta,
@@ -378,18 +383,18 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
       if (snapshot?.name) {
         return new Text(renderWorkflowText(snapshot, !isPartial), 0, 0);
       }
-      // Fallback: strip markdown syntax so the TUI doesn't display raw asterisks/hashes.
-      // The `content` field is for the LLM (where markdown is preserved), but the TUI
-      // renderer (Text component) shows text literally — so we strip markdown here.
-      const text = result.content?.[0];
-      const raw = text?.type === "text" ? text.text : theme.fg("muted", "workflow");
-      const clean = raw
+      // No snapshot to render: fall back to the LLM-facing text. That text keeps
+      // its markdown, but the TUI's Text component prints literally, so strip the
+      // markers (bold **, fenced code, leading ##) before displaying it.
+      const first = result.content?.[0];
+      const raw = first?.type === "text" ? first.text : theme.fg("muted", "workflow");
+      const stripped = raw
         .replace(/\*\*/g, "")
         .replace(/```[a-z]*\n/g, "")
         .replace(/```/g, "")
         .replace(/^##+\s*/gm, "")
         .trim();
-      return new Text(clean || theme.fg("muted", "workflow"), 0, 0);
+      return new Text(stripped || theme.fg("muted", "workflow"), 0, 0);
     },
   });
 }
@@ -482,16 +487,19 @@ export function resumeFailureText(manager: WorkflowManager, runId: string): stri
 }
 
 function normalizeWorkflowToolArgs(args: unknown): WorkflowToolInput {
-  if (!args || typeof args !== "object") throw new Error("workflow requires an object argument");
-  const value = args as Record<string, unknown>;
-  const hasSource = [value.scriptPath, value.script, value.name].some(
-    (source) => typeof source === "string" && source.length > 0,
-  );
-  if (!hasSource) throw new Error("workflow requires at least one of `scriptPath`, `script`, or `name`");
-  return {
-    ...value,
-    ...(typeof value.script === "string" ? { script: normalizeWorkflowScript(value.script) } : {}),
-  } as WorkflowToolInput;
+  if (typeof args !== "object" || args === null) {
+    throw new Error("workflow requires an object argument");
+  }
+  const record = args as Record<string, unknown>;
+  const nonEmpty = (candidate: unknown): candidate is string => typeof candidate === "string" && candidate.length > 0;
+  if (!nonEmpty(record.scriptPath) && !nonEmpty(record.script) && !nonEmpty(record.name)) {
+    throw new Error("workflow requires at least one of `scriptPath`, `script`, or `name`");
+  }
+  const normalized: Record<string, unknown> = { ...record };
+  if (typeof record.script === "string") {
+    normalized.script = normalizeWorkflowScript(record.script);
+  }
+  return normalized as WorkflowToolInput;
 }
 
 function resolveWorkflowSource(
@@ -516,11 +524,13 @@ function resolveWorkflowSource(
   return { script: normalizeWorkflowScript(saved.script), sourcePath: saved.path };
 }
 
+/** Matches an entire string wrapped in a ``` / ```js / ```javascript fence. */
+const FENCED_SCRIPT_PATTERN = /^```(?:js|javascript)?\s*\n([\s\S]*?)\n```$/i;
+
 function normalizeWorkflowScript(script: string): string {
-  let text = script.trim();
-  const fence = text.match(/^```(?:js|javascript)?\s*\n([\s\S]*?)\n```$/i);
-  if (fence) text = fence[1].trim();
-  return text;
+  const trimmed = script.trim();
+  const fenced = FENCED_SCRIPT_PATTERN.exec(trimmed);
+  return fenced ? fenced[1].trim() : trimmed;
 }
 
 function _isAbortError(error: unknown): boolean {
