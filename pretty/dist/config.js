@@ -3,12 +3,9 @@
  * pi-pretty: ANSI codes, icons, theme, and environment config.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CACHE_LIMIT = exports.MAX_PREVIEW_LINES = exports.MAX_HL_CHARS = exports.NF_DEFAULT = exports.NF_DIR = exports.USE_ICONS = exports.BG_DEL = exports.BG_ADD = exports.BG_ERROR = exports.BG_BASE = exports.FG_MUTED = exports.FG_BLUE = exports.FG_YELLOW = exports.FG_RED = exports.FG_GREEN = exports.FG_RULE = exports.FG_DIM = exports.FG_LNUM = exports.RST = exports.TOOL_RESULT_INDENT = void 0;
+exports.MAX_PREVIEW_LINES = exports.BG_DEL = exports.BG_ADD = exports.BG_ERROR = exports.BG_BASE = exports.FG_MUTED = exports.FG_BLUE = exports.FG_YELLOW = exports.FG_RED = exports.FG_GREEN = exports.FG_RULE = exports.FG_DIM = exports.FG_LNUM = exports.RST = exports.TOOL_RESULT_INDENT = void 0;
 exports.resolveBaseBackground = resolveBaseBackground;
 exports.termWidth = termWidth;
-exports.fileIcon = fileIcon;
-exports.dirIcon = dirIcon;
-exports.detectLang = detectLang;
 exports.envInt = envInt;
 exports.getDefaultAgentDir = getDefaultAgentDir;
 const node_fs_1 = require("node:fs");
@@ -174,147 +171,13 @@ function termWidth() {
     return Math.max(1, Math.min(raw - 4, 210));
 }
 // ---------------------------------------------------------------------------
-// File-type icons — Nerd Font glyphs
-// ---------------------------------------------------------------------------
-const ICONS_MODE = (process.env.PRETTY_ICONS ?? "nerd").toLowerCase();
-exports.USE_ICONS = ICONS_MODE !== "none" && ICONS_MODE !== "off";
-exports.NF_DIR = `${exports.FG_BLUE}\ue5ff${exports.RST}`;
-exports.NF_DEFAULT = `${exports.FG_DIM}\uf15b${exports.RST}`;
-const EXT_ICON = {
-    ts: `\x1b[38;2;49;120;198m\ue628${exports.RST}`,
-    tsx: `\x1b[38;2;49;120;198m\ue7ba${exports.RST}`,
-    js: `\x1b[38;2;241;224;90m\ue74e${exports.RST}`,
-    jsx: `\x1b[38;2;97;218;251m\ue7ba${exports.RST}`,
-    mjs: `\x1b[38;2;241;224;90m\ue74e${exports.RST}`,
-    cjs: `\x1b[38;2;241;224;90m\ue74e${exports.RST}`,
-    py: `\x1b[38;2;55;118;171m\ue73c${exports.RST}`,
-    rs: `\x1b[38;2;222;165;132m\ue7a8${exports.RST}`,
-    go: `\x1b[38;2;0;173;216m\ue724${exports.RST}`,
-    java: `\x1b[38;2;204;62;68m\ue738${exports.RST}`,
-    swift: `\x1b[38;2;255;172;77m\ue755${exports.RST}`,
-    rb: `\x1b[38;2;204;52;45m\ue739${exports.RST}`,
-    kt: `\x1b[38;2;126;103;200m\ue634${exports.RST}`,
-    c: `\x1b[38;2;85;154;211m\ue61e${exports.RST}`,
-    cpp: `\x1b[38;2;85;154;211m\ue61d${exports.RST}`,
-    cs: `\x1b[38;2;104;33;122m\ue648${exports.RST}`,
-    html: `\x1b[38;2;228;77;38m\ue736${exports.RST}`,
-    css: `\x1b[38;2;66;165;245m\ue749${exports.RST}`,
-    scss: `\x1b[38;2;207;100;154m\ue749${exports.RST}`,
-    vue: `\x1b[38;2;65;184;131m\ue6a0${exports.RST}`,
-    svelte: `\x1b[38;2;255;62;0m\ue697${exports.RST}`,
-    json: `\x1b[38;2;241;224;90m\ue60b${exports.RST}`,
-    yaml: `\x1b[38;2;160;116;196m\ue6a8${exports.RST}`,
-    yml: `\x1b[38;2;160;116;196m\ue6a8${exports.RST}`,
-    toml: `\x1b[38;2;160;116;196m\ue6b2${exports.RST}`,
-    xml: `\x1b[38;2;228;77;38m\ue619${exports.RST}`,
-    md: `\x1b[38;2;66;165;245m\ue73e${exports.RST}`,
-    mdx: `\x1b[38;2;66;165;245m\ue73e${exports.RST}`,
-    sql: `\x1b[38;2;218;218;218m\ue706${exports.RST}`,
-    sh: `\x1b[38;2;137;180;130m\ue795${exports.RST}`,
-    bash: `\x1b[38;2;137;180;130m\ue795${exports.RST}`,
-    zsh: `\x1b[38;2;137;180;130m\ue795${exports.RST}`,
-    lua: `\x1b[38;2;81;160;207m\ue620${exports.RST}`,
-    php: `\x1b[38;2;137;147;186m\ue73d${exports.RST}`,
-    dart: `\x1b[38;2;87;182;240m\ue798${exports.RST}`,
-    png: `\x1b[38;2;160;116;196m\uf1c5${exports.RST}`,
-    jpg: `\x1b[38;2;160;116;196m\uf1c5${exports.RST}`,
-    svg: `\x1b[38;2;255;180;50m\uf1c5${exports.RST}`,
-    webp: `\x1b[38;2;160;116;196m\uf1c5${exports.RST}`,
-    lock: `\x1b[38;2;130;130;130m\uf023${exports.RST}`,
-    env: `\x1b[38;2;241;224;90m\ue615${exports.RST}`,
-    graphql: `\x1b[38;2;224;51;144m\ue662${exports.RST}`,
-    dockerfile: `\x1b[38;2;56;152;236m\ue7b0${exports.RST}`,
-};
-const NAME_ICON = {
-    "package.json": `\x1b[38;2;137;180;130m\ue71e${exports.RST}`,
-    "package-lock.json": `\x1b[38;2;130;130;130m\ue71e${exports.RST}`,
-    "tsconfig.json": `\x1b[38;2;49;120;198m\ue628${exports.RST}`,
-    ".gitignore": `\x1b[38;2;222;165;132m\ue702${exports.RST}`,
-    ".env": `\x1b[38;2;241;224;90m\ue615${exports.RST}`,
-    dockerfile: `\x1b[38;2;56;152;236m\ue7b0${exports.RST}`,
-    makefile: `\x1b[38;2;130;130;130m\ue615${exports.RST}`,
-    "readme.md": `\x1b[38;2;66;165;245m\ue73e${exports.RST}`,
-    license: `\x1b[38;2;218;218;218m\ue60a${exports.RST}`,
-};
-function fileIcon(fp) {
-    if (!exports.USE_ICONS)
-        return "";
-    const base = (0, node_path_1.basename)(fp).toLowerCase();
-    if (NAME_ICON[base])
-        return `${NAME_ICON[base]} `;
-    const ext = (0, node_path_1.extname)(fp).slice(1).toLowerCase();
-    // Default icon built from the CURRENT palette (NF_DEFAULT froze the dark one).
-    return EXT_ICON[ext] ? `${EXT_ICON[ext]} ` : `${exports.FG_DIM}\uf15b${exports.RST} `;
-}
-function dirIcon() {
-    // Built fresh so the dir-icon color follows a light/dark palette swap.
-    return exports.USE_ICONS ? `${exports.FG_BLUE}\ue5ff${exports.RST} ` : "";
-}
-const EXT_LANG = {
-    ts: "typescript",
-    tsx: "tsx",
-    js: "javascript",
-    jsx: "jsx",
-    mjs: "javascript",
-    cjs: "javascript",
-    py: "python",
-    rb: "ruby",
-    rs: "rust",
-    go: "go",
-    java: "java",
-    c: "c",
-    cpp: "cpp",
-    h: "c",
-    hpp: "cpp",
-    cs: "csharp",
-    swift: "swift",
-    kt: "kotlin",
-    html: "html",
-    css: "css",
-    scss: "scss",
-    less: "css",
-    json: "json",
-    jsonc: "jsonc",
-    yaml: "yaml",
-    yml: "yaml",
-    toml: "toml",
-    md: "markdown",
-    mdx: "mdx",
-    sql: "sql",
-    sh: "bash",
-    bash: "bash",
-    zsh: "bash",
-    lua: "lua",
-    php: "php",
-    dart: "dart",
-    xml: "xml",
-    graphql: "graphql",
-    svelte: "svelte",
-    vue: "vue",
-    dockerfile: "dockerfile",
-    makefile: "make",
-    zig: "zig",
-    nim: "nim",
-    elixir: "elixir",
-};
-function detectLang(fp) {
-    const base = (0, node_path_1.basename)(fp).toLowerCase();
-    if (base === "dockerfile")
-        return "dockerfile";
-    if (base === "makefile" || base === "gnumakefile")
-        return "make";
-    return EXT_LANG[(0, node_path_1.extname)(fp).slice(1).toLowerCase()];
-}
-// ---------------------------------------------------------------------------
 // Env helpers
 // ---------------------------------------------------------------------------
 function envInt(name, fallback) {
     const v = Number.parseInt(process.env[name] ?? "", 10);
     return Number.isFinite(v) && v > 0 ? v : fallback;
 }
-exports.MAX_HL_CHARS = envInt("PRETTY_MAX_HL_CHARS", 80_000);
 exports.MAX_PREVIEW_LINES = envInt("PRETTY_MAX_PREVIEW_LINES", 80);
-exports.CACHE_LIMIT = envInt("PRETTY_CACHE_LIMIT", 128);
 // ---------------------------------------------------------------------------
 // Agent directory helpers
 // ---------------------------------------------------------------------------

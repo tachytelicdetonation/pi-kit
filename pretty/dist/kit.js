@@ -117,15 +117,11 @@ const dim = (s) => `${c.FG_DIM}${s}${c.RST}`;
 // A colored marker segment that returns to dim afterwards (so joinDim keeps flowing).
 const redSeg = (s) => `${c.RST}${c.FG_RED}${s}${c.RST}${c.FG_DIM}`;
 const greenSeg = (s) => `${c.RST}${c.FG_GREEN}${s}${c.RST}${c.FG_DIM}`;
-// @deprecated Round 3 — loses all callers (color budget §1.3). Kept exported
-// for API stability; do not add new callers.
-const warnSeg = (s) => `${c.RST}${c.FG_YELLOW}${s}${c.RST}${c.FG_DIM}`;
 exports.SEP = SEP;
 exports.plural = plural;
 exports.dim = dim;
 exports.redSeg = redSeg;
 exports.greenSeg = greenSeg;
-exports.warnSeg = warnSeg;
 
 // --- path segment: dim dirname + normal basename -------------------------
 // Renders "dir/" dimmed (FG_DIM) followed by the basename in the default weight/
@@ -172,7 +168,7 @@ function gutterLine(no, nw, code) {
 exports.gutterLine = gutterLine;
 
 // --- the fused marker line ----------------------------------------------
-// segs: plain (dimmed) or pre-colored (redSeg/warnSeg) strings; empties dropped.
+// segs: plain (dimmed) or pre-colored (redSeg/greenSeg) strings; empties dropped.
 // Returns "" when there is nothing worth saying (→ zero chrome).
 function markerInner(segs) {
     const f = segs.filter(Boolean);
