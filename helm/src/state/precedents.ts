@@ -39,6 +39,7 @@ export function buildPrecedent(escalation: Escalation, index: number): Precedent
  * the escalation unchanged. Never mutates the input.
  */
 export function autoResolve(escalation: Escalation, precedents: readonly Precedent[]): Escalation {
+  if (escalation.resolutionClass === "permission" || escalation.resolutionClass === "approval") return escalation;
   const precedent = matchingPrecedent(escalation.signature, precedents);
   if (!precedent) return escalation;
   return {
@@ -46,4 +47,16 @@ export function autoResolve(escalation: Escalation, precedents: readonly Precede
     resolved: true,
     precedentNote: `auto-resolved by precedent: ${precedent.decision}`,
   };
+}
+
+function normalized(value: string): string {
+  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
+}
+
+/** Stable signature for decision conflicts: source + conflict kind + normalized scope. */
+export function stableDecisionSignature(escalation: Escalation): string {
+  const legacyKind = escalation.signature.split(":").slice(1).join(":") || escalation.question;
+  const kind = escalation.conflictKind ?? legacyKind;
+  const scope = escalation.scope ?? escalation.source.label;
+  return `decision:${normalized(escalation.source.kind)}:${normalized(kind)}:${normalized(scope)}`;
 }

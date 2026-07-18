@@ -58,6 +58,7 @@ export function bridgePermissionRequest(ds: DataSource, request: PermissionReque
     blockedMinutes: 0,
     idleNote: "",
     signature,
+    resolutionClass: "permission",
     precedentPhrase: request.question,
     worktreeId: request.worktreeId,
   };

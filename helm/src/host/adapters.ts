@@ -367,9 +367,46 @@ function loopTrialScript(loop: LoopDraft): string {
     phases: [{ title: "Trial" }],
 })}
 phase('Trial')
-const result = await agent(${JSON.stringify(`Run one supervised, non-destructive trial of this proposed Helm loop. Do not publish, merge, or mutate external systems.\n\nTrigger: ${loop.trigger}\nSteps: ${loop.steps}\nSkips: ${loop.skips}\nGuardrails: ${loop.guardrails.join(", ")}\n\nReport what would happen, checks performed, and whether it is safe to schedule.`)}, { label: 'supervised trial', tier: 'medium' })
+const result = await agent(${JSON.stringify(`Run one supervised, non-destructive trial of this proposed Helm loop. Do not publish, merge, or mutate external systems.\n\nTrigger: ${loop.trigger}\nSteps: ${loop.steps}\nSkips: ${loop.skips}\nGuardrails: ${loop.guardrails.join(", ")}\n\nReturn a JSON object only: {"passed": boolean, "evidence": string[]}. passed may be true only when the trial evidence demonstrates every step and guardrail is safe; workflow completion by itself is not a pass.`)}, { label: 'supervised trial', tier: 'medium' })
 if (!result) throw new Error('supervised trial produced no result')
 return result`;
+}
+
+function parseTrialVerdict(value: unknown): { passed: boolean; evidence: string[] } | undefined {
+  if (typeof value === "object" && value !== null) {
+    const candidate = value as { passed?: unknown; evidence?: unknown };
+    if (typeof candidate.passed === "boolean" && Array.isArray(candidate.evidence) && candidate.evidence.every((item) => typeof item === "string")) {
+      return { passed: candidate.passed, evidence: candidate.evidence };
+    }
+  }
+  if (typeof value !== "string") return undefined;
+  const fenced = value.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  const raw = fenced ?? value.slice(value.indexOf("{"), value.lastIndexOf("}") + 1);
+  try {
+    return parseTrialVerdict(JSON.parse(raw));
+  } catch {
+    return undefined;
+  }
+}
+
+function planGoalInput(prompt: string) {
+  const normalized = prompt.trim();
+  const ambiguous = /\b(?:tbd|unsure|somehow|whatever|either option)\b/i.test(normalized);
+  const questions = !normalized
+    ? [{ id: "outcome", question: "What concrete outcome should Pi deliver?" }]
+    : ambiguous ? [{ id: "ambiguity", question: "Which unresolved option should the plan use?" }] : [];
+  const words = normalized.split(/\s+/).filter(Boolean).length;
+  const workflowCount = words > 80 ? 3 : words > 30 ? 2 : 1;
+  return {
+    questions,
+    plan: Array.from({ length: workflowCount }, (_, index) => ({
+      name: workflowCount === 1 ? "execute" : `lane-${index + 1}`,
+      description: index === workflowCount - 1 ? "implement the scoped outcome and verify acceptance evidence" : "inspect and implement an independent portion of the scoped outcome",
+    })),
+    estWall: workflowCount === 1 ? "1-3h wall" : `${workflowCount * 2}-${workflowCount * 4}h wall`,
+    estCost: `~$${workflowCount * 8}-${workflowCount * 20}`,
+    escalationRule: "un-inferable, destructive, permission, and cross-scope decisions escalate to you",
+  };
 }
 
 function scheduledLoopScript(loop: LoopDraft): string {
@@ -533,15 +570,33 @@ export function createWorkflowPort(manager: WorkflowManager, getCmux: () => Clau
       if (manager.listRuns().some((run) => run.runId === id)) manager.pause(id);
     },
     resumeWorkflow: (id) => manager.resume(id),
-    pauseAll() {
-      for (const run of helmRuns(manager)) {
-        if (run.status === "running") manager.pause(run.runId);
-      }
+    pauseWorktree(worktreeId) {
+      const [runId, agentId] = worktreeId.split("::");
+      return manager.pauseAgent(runId!, Number(agentId));
     },
-    resumeAll() {
+    resumeWorktree(worktreeId) {
+      const [runId, agentId] = worktreeId.split("::");
+      return manager.resumeAgent(runId!, Number(agentId));
+    },
+    isWorktreePaused(worktreeId) {
+      const [runId, agentId] = worktreeId.split("::");
+      return manager.isAgentPaused(runId!, Number(agentId));
+    },
+    pauseAll() {
+      const paused: string[] = [];
       for (const run of helmRuns(manager)) {
-        if (run.status === "paused") void manager.resume(run.runId);
+        if (run.status === "running" && manager.pause(run.runId)) paused.push(run.runId);
       }
+      return paused;
+    },
+    resumeAll(runIds) {
+      for (const runId of runIds) void manager.resume(runId);
+    },
+    async planGoal(input) {
+      // Pure planning capability: intentionally does not call manager.start*/runSync.
+      const derived = planGoalInput(input.prompt);
+      const answers = new Map(input.answers.filter((item) => item.answer).map((item) => [item.id, item.answer!]));
+      return { ...derived, questions: derived.questions.map((question) => ({ ...question, answer: answers.get(question.id) })) };
     },
     async startGoal(input) {
       const plans = input.plan.length ? input.plan : [{ name: "execution", description: "Implement and verify the goal" }];
@@ -564,9 +619,12 @@ export function createWorkflowPort(manager: WorkflowManager, getCmux: () => Clau
       try {
         await started.promise;
         const run = manager.listAllRuns().find((item) => item.runId === started.runId);
-        return { ok: run?.status === "completed", runId: started.runId };
+        const verdict = parseTrialVerdict(run?.result);
+        return verdict
+          ? { ...verdict, ok: verdict.passed, runId: started.runId }
+          : { passed: false, ok: false, evidence: ["Trial report did not contain a valid {passed, evidence} verdict."], runId: started.runId };
       } catch {
-        return { ok: false, runId: started.runId };
+        return { passed: false, ok: false, evidence: ["Trial workflow failed before producing a verdict."], runId: started.runId };
       }
     },
     async runLoop(loop) {

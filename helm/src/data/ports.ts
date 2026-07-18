@@ -8,7 +8,15 @@
  * UsageService) — only the port implementations differ. Keeping the surface this
  * small is what lets the conformance contract validate the composition hermetically.
  */
-import type { HelmFooterModel, IntakeWorkflowPlan, LoopDraft, Session, UsageDetail, Workflow, WorkflowDetail } from "../state/types.js";
+import type { HelmFooterModel, IntakeQuestion, IntakeWorkflowPlan, LoopDefinition, LoopDraft, Session, TrialVerdict, UsageDetail, Workflow, WorkflowDetail } from "../state/types.js";
+
+export interface IntakePlanResult {
+  questions: IntakeQuestion[];
+  plan: IntakeWorkflowPlan[];
+  estWall: string;
+  estCost: string;
+  escalationRule: string;
+}
 
 export interface UsageCostRecord {
   goalId?: string;
@@ -52,9 +60,16 @@ export interface WorkflowPort {
   pauseWorkflow(id: string): void;
   /** Resume a paused lane. */
   resumeWorkflow(id: string): Promise<boolean>;
-  /** Pause/resume all live workflow-manager lanes. */
-  pauseAll(): void;
-  resumeAll(): void;
+  /** Pause exactly one worktree/agent without affecting sibling agents. */
+  pauseWorktree(worktreeId: string): boolean;
+  resumeWorktree(worktreeId: string): boolean;
+  isWorktreePaused(worktreeId: string): boolean;
+  /** Pause all running lanes and report exactly which run ids changed state. */
+  pauseAll(): string[];
+  /** Resume only the checkpointed ids supplied by Helm. */
+  resumeAll(runIds: readonly string[]): void;
+  /** Planning-only operation: must not create a workflow run or start an agent. */
+  planGoal(input: { prompt: string; answers: IntakeQuestion[] }): Promise<IntakePlanResult>;
   /** Launch the real workflow runs that implement a locked goal plan. */
   startGoal(input: {
     goalId: string;
@@ -63,9 +78,9 @@ export interface WorkflowPort {
     plan: IntakeWorkflowPlan[];
   }): Promise<string[]>;
   /** Execute one supervised loop trial through the workflow manager. */
-  trialLoop(loop: LoopDraft): Promise<{ ok: boolean; runId?: string }>;
+  trialLoop(loop: LoopDraft): Promise<TrialVerdict>;
   /** Execute one due scheduled loop and resolve after its workflow verifies. */
-  runLoop(loop: LoopDraft): Promise<{ ok: boolean; runId?: string }>;
+  runLoop(loop: LoopDefinition): Promise<{ ok: boolean; runId?: string }>;
   /** Completion/progress derived from all persisted runs belonging to a Helm goal. */
   getGoalProgress(goalId: string): { progress: number; complete: boolean } | undefined;
   /** Measured queue, receipt, verification, and accounting totals for one goal. */

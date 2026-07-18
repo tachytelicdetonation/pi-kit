@@ -14,12 +14,13 @@ import type {
   LoopDraft,
   Precedent,
   Session,
+  TrialVerdict,
   UsageDetail,
   WorkflowDetail,
 } from "./../state/types.js";
 
 /** The corpus a `/` search spans — everything, ARCHIVED included (search is forever). */
-export type SearchKind = "goal" | "workflow" | "loop" | "pr" | "decision" | "precedent" | "loopRun";
+export type SearchKind = "goal" | "workflow" | "loop" | "pr" | "decision" | "precedent" | "loopRun" | "audit";
 
 /**
  * A single search hit: a kind badge, a label (+ optional sublabel for context such
@@ -101,6 +102,10 @@ export interface DataSource {
   listEscalations(): Escalation[];
   /** The recorded decision precedents (durable in the production source). */
   precedents(): Precedent[];
+  /** Persistently decline a proposed precedent; it will never be proposed/applied again. */
+  declinePrecedent(id: string): void;
+  /** Append an answer to an existing follow-up without resolving/closing the card. */
+  answerEscalationFollowUp(escalationId: string, questionAt: number, answer: string): void;
 
   // ── 7c catch-up digest (Phase 4) ─────────────────────────────────────────
   /** The catch-up digest payload (four line types + quota drain). */
@@ -129,7 +134,7 @@ export interface DataSource {
   /** Archive a completed goal (search still finds it — archived is forever). */
   archiveGoal(id: string): void;
   /** Run a loop's mandatory trial under full review. Resolves ok/failed once. */
-  trialLoop(id: string): Promise<{ ok: boolean }>;
+  trialLoop(id: string): Promise<TrialVerdict>;
   /** Search everything — goals, PRs, decisions, precedents, loop runs; ARCHIVED included. */
   search(query: string): SearchResult[];
 

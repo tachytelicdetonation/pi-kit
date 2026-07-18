@@ -284,6 +284,8 @@ test("a stored selection past a shrunk list clamps at read time (render + enter 
     getEscalation: (id: string) => base.getEscalation(id),
     listEscalations: () => base.listEscalations(),
     precedents: () => base.precedents(),
+    declinePrecedent: (id: string) => base.declinePrecedent(id),
+    answerEscalationFollowUp: (id: string, at: number, answer: string) => base.answerEscalationFollowUp(id, at, answer),
     getDigest: () => base.getDigest(),
     shouldShowDigest: () => base.shouldShowDigest(),
     getIntake: (id: string) => base.getIntake(id),

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import type { Closeout, Escalation, Goal, IntakeDraft, JournalEvent, Loop, LoopDraft, Precedent } from "./types.js";
+import type { AuditRecord, Closeout, Escalation, Goal, IntakeDraft, JournalEvent, Loop, LoopDraft, PauseAllCheckpoint, Precedent } from "./types.js";
 
 export interface PersistedUsageSnapshot {
   spentUsd: number;
@@ -20,6 +20,10 @@ export interface PersistedHelmDomain {
   intakes: IntakeDraft[];
   loopDrafts: LoopDraft[];
   closeouts: Closeout[];
+  decisions: Escalation[];
+  audit: AuditRecord[];
+  pausedAll: boolean;
+  pauseCheckpoint?: PauseAllCheckpoint;
   lastSeenAt?: number;
   /** Accounting/quota baseline captured at the same instant as lastSeenAt. */
   usageSnapshot?: PersistedUsageSnapshot;
@@ -43,6 +47,9 @@ function emptyDomain(cwd: string): PersistedHelmDomain {
     intakes: [],
     loopDrafts: [],
     closeouts: [],
+    decisions: [],
+    audit: [],
+    pausedAll: false,
   };
 }
 
@@ -75,6 +82,9 @@ export function createHelmRepository(cwd: string, path = helmStatePath(cwd)): He
           intakes: Array.isArray(parsed.intakes) ? parsed.intakes : [],
           loopDrafts: Array.isArray(parsed.loopDrafts) ? parsed.loopDrafts : [],
           closeouts: Array.isArray(parsed.closeouts) ? parsed.closeouts : [],
+          decisions: Array.isArray(parsed.decisions) ? parsed.decisions : [],
+          audit: Array.isArray(parsed.audit) ? parsed.audit : [],
+          pausedAll: parsed.pausedAll === true,
         };
       } catch {
         return emptyDomain(absoluteCwd);

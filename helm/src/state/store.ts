@@ -11,7 +11,7 @@
  * notifies — callers debounce at the render layer).
  */
 import { autoResolve, buildPrecedent } from "./precedents.js";
-import type { Escalation, Goal, HelmFooterModel, HelmState, JournalEvent, Loop, Precedent, Workflow } from "./types.js";
+import type { AuditRecord, Escalation, Goal, HelmFooterModel, HelmState, JournalEvent, Loop, PauseAllCheckpoint, Precedent, Workflow } from "./types.js";
 
 /**
  * Stable comparator for the needs-you queue: oldest-blocked first, ties broken by
@@ -45,7 +45,14 @@ export class HelmStore {
   private readonly subscribers = new Set<() => void>();
 
   constructor(initial: HelmState) {
-    this.state = { ...initial };
+    this.state = {
+      ...initial,
+      loops: initial.loops.map((loop) => loop.health === "paused"
+        ? { ...loop, scheduledState: "paused", pausedReason: loop.pausedReason ?? "paused — reason unavailable from legacy state" }
+        : { ...loop, scheduledState: loop.scheduledState ?? loop.health }),
+      decisions: [...(initial.decisions ?? [])],
+      audit: [...(initial.audit ?? [])],
+    };
     this.resort();
   }
 
@@ -63,16 +70,16 @@ export class HelmStore {
   }
 
   /** Engage pause-all: freeze every lane mid-step. Idempotent. */
-  pauseAll(): void {
+  pauseAll(checkpoint?: PauseAllCheckpoint): void {
     if (this.state.pausedAll) return;
-    this.state = { ...this.state, pausedAll: true };
+    this.state = { ...this.state, pausedAll: true, pauseCheckpoint: checkpoint };
     this.emit();
   }
 
   /** Release pause-all. Idempotent. */
   resumeAll(): void {
     if (!this.state.pausedAll) return;
-    this.state = { ...this.state, pausedAll: false };
+    this.state = { ...this.state, pausedAll: false, pauseCheckpoint: undefined };
     this.emit();
   }
 
@@ -118,13 +125,43 @@ export class HelmStore {
     this.emit();
   }
 
-  upsertLoop(loop: Loop): void {
+  /** The only draft/trial -> scheduled transition. Existing definitions are replaced atomically. */
+  scheduleLoop(loop: Loop): void {
+    if (loop.lifecycle !== "scheduled" || !loop.activeDefinition) {
+      throw new Error("scheduleLoop requires an accepted, trial-verified activeDefinition");
+    }
+    if (loop.health === "paused" && !loop.pausedReason?.trim()) {
+      throw new Error("paused scheduled loops require pausedReason");
+    }
     const found = this.state.loops.some((item) => item.id === loop.id);
     this.state = {
       ...this.state,
       loops: found ? this.state.loops.map((item) => item.id === loop.id ? loop : item) : [...this.state.loops, loop],
     };
     this.resort();
+    this.emit();
+  }
+
+  /** Update runtime scheduler fields without replacing the immutable active definition. */
+  updateScheduledLoop(id: string, update: Partial<Omit<Loop, "id" | "activeDefinition" | "lifecycle">>): void {
+    const current = this.state.loops.find((loop) => loop.id === id);
+    const next = current ? { ...current, ...update } : undefined;
+    if (next?.health === "paused" && !next.pausedReason?.trim()) {
+      throw new Error("paused scheduled loops require pausedReason");
+    }
+    this.state = {
+      ...this.state,
+      loops: this.state.loops.map((loop) => loop.id === id ? { ...loop, ...update, activeDefinition: loop.activeDefinition } : loop),
+    };
+    this.resort();
+    this.emit();
+  }
+
+  setLoopPendingDraft(id: string, pendingDraft: Loop["pendingDraft"]): void {
+    this.state = {
+      ...this.state,
+      loops: this.state.loops.map((loop) => loop.id === id ? { ...loop, pendingDraft } : loop),
+    };
     this.emit();
   }
 
@@ -135,6 +172,7 @@ export class HelmStore {
         ? {
             ...loop,
             health: loop.health === "paused" ? "healthy" as const : "paused" as const,
+            scheduledState: loop.health === "paused" ? "healthy" as const : "paused" as const,
             pausedReason: loop.health === "paused" ? undefined : "paused by operator",
           }
         : loop),
@@ -146,6 +184,12 @@ export class HelmStore {
   appendJournal(event: JournalEvent): void {
     if (this.state.journal.some((item) => item.id === event.id)) return;
     this.state = { ...this.state, journal: [...this.state.journal, event] };
+    this.emit();
+  }
+
+  appendAudit(record: AuditRecord): void {
+    if (this.state.audit?.some((item) => item.id === record.id)) return;
+    this.state = { ...this.state, audit: [...(this.state.audit ?? []), record] };
     this.emit();
   }
 
@@ -173,6 +217,7 @@ export class HelmStore {
       ...this.state,
       precedents: [...this.state.precedents, precedent],
       escalations: this.state.escalations.filter((item) => item.id !== escalationId),
+      decisions: [...(this.state.decisions ?? []), { ...escalation, resolved: true, precedentNote: `decided: ${precedent.decision}` }],
     };
     this.resort();
     this.emit();
@@ -189,9 +234,23 @@ export class HelmStore {
     if (!resolved.resolved) {
       this.state = { ...this.state, escalations: [...this.state.escalations, resolved] };
       this.resort();
+    } else {
+      this.state = { ...this.state, decisions: [...(this.state.decisions ?? []), resolved] };
     }
     this.emit();
     return resolved;
+  }
+
+  declinePrecedent(id: string): boolean {
+    let changed = false;
+    const precedents = this.state.precedents.map((precedent) => {
+      if (precedent.id !== id || precedent.declined) return precedent;
+      changed = true;
+      return { ...precedent, declined: true };
+    });
+    if (changed) this.state = { ...this.state, precedents };
+    this.emit();
+    return changed;
   }
 
   /** Update a still-active escalation (for persisted follow-up questions/answers). */

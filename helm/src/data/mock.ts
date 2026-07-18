@@ -580,6 +580,18 @@ export class MockDataSource implements DataSource {
     return this.store.getState().precedents;
   }
 
+  declinePrecedent(id: string): void {
+    this.store.declinePrecedent(id);
+  }
+
+  answerEscalationFollowUp(escalationId: string, questionAt: number, answer: string): void {
+    const escalation = this.getEscalation(escalationId);
+    if (!escalation) return;
+    this.store.updateEscalation(escalationId, {
+      followUps: (escalation.followUps ?? []).map((item) => item.at === questionAt ? { ...item, answer } : item),
+    });
+  }
+
   // ── 7c catch-up digest (Phase 4) ─────────────────────────────────────────
   getDigest(): DigestData {
     return seedDigest();
@@ -642,13 +654,13 @@ export class MockDataSource implements DataSource {
     this.store.archiveGoal(id);
   }
 
-  trialLoop(id: string): Promise<{ ok: boolean }> {
+  trialLoop(id: string): Promise<{ passed: boolean; evidence: string[]; ok: boolean }> {
     // Deterministic outcome for tests: a draft id containing "fail" fails its trial,
     // everything else passes. A real source would run the loop once under review.
     const ok = !id.includes("fail");
     const draft = this.getLoopDraft(id);
     if (ok && draft) this.loopDrafts.set(id, { ...draft, trialPassed: true });
-    return Promise.resolve({ ok });
+    return Promise.resolve({ passed: ok, evidence: [ok ? "mock trial passed" : "mock trial failed"], ok });
   }
 
   search(query: string): SearchResult[] {
@@ -751,8 +763,14 @@ export class MockDataSource implements DataSource {
         return { ok: true, agentPrompt: `Merge ${command.worktreeId}` };
       case "session.steer":
         return { ok: true, agentPrompt: command.text };
-      case "escalation.ask":
-        return { ok: true, agentPrompt: command.text };
+      case "escalation.ask": {
+        const escalation = this.getEscalation(command.escalationId);
+        if (!escalation) return { ok: false };
+        this.store.updateEscalation(escalation.id, {
+          followUps: [...(escalation.followUps ?? []), { question: command.text, at: Date.now() }],
+        });
+        return { ok: true, message: "Follow-up added; the escalation remains active." };
+      }
       case "digest.fullLog":
         return { ok: true, document: { title: "full activity log", lines: ["mock activity"] } };
     }

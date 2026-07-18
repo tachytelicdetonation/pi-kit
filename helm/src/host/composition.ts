@@ -46,8 +46,7 @@ export function createHelmDataSource(
   deps: { workflows: WorkflowPort; usage: UsagePort },
   cwd = process.cwd(),
 ): RealDataSource {
-  let source: RealDataSource | undefined;
-  source = new RealDataSource({
+  const source = new RealDataSource({
     workflows: deps.workflows,
     usage: withWorkflowAccounting(deps.usage, deps.workflows),
     nativeState: {
@@ -60,10 +59,6 @@ export function createHelmDataSource(
       pausedAll: false,
       footer: { cwd, providers: [] },
       mainModel: "",
-    },
-    trialLoop: async (id) => {
-      const draft = source?.getLoopDraft(id);
-      return draft ? deps.workflows.trialLoop(draft) : { ok: false };
     },
     synthDigest: () => ({
       spanText: "no recorded activity",
