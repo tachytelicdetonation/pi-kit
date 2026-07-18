@@ -96,8 +96,8 @@ export class HelmApp implements Component {
   private readonly applied = new Set<string>();
   /** Per-closeout precedent ids currently declined by the operator. */
   private readonly declined = new Map<string, Set<string>>();
-  /** Stable numbered rows for the open card; durable declines disappear from getCloseout(). */
-  private readonly closeoutPrecedents = new Map<string, Precedent[]>();
+  /** Stable numbered row ids for an open card; payloads are always resolved afresh. */
+  private readonly closeoutPrecedentIds = new Map<string, string[]>();
   /** Last-seen needs-you count — drives the bell-on-new-escalation heuristic. */
   private prevEscalationCount: number;
   private readonly dataSource: DataSource;
@@ -416,11 +416,21 @@ export class HelmApp implements Component {
   }
 
   private rememberCloseoutPrecedents(key: string, current: readonly Precedent[]): Precedent[] {
-    const remembered = this.closeoutPrecedents.get(key) ?? [];
-    const seen = new Set(remembered.map((precedent) => precedent.id));
-    const merged = [...remembered, ...current.filter((precedent) => !seen.has(precedent.id))];
-    this.closeoutPrecedents.set(key, merged);
-    return merged;
+    const ids = this.closeoutPrecedentIds.get(key) ?? [];
+    const seen = new Set(ids);
+    for (const precedent of current) {
+      if (!seen.has(precedent.id)) {
+        ids.push(precedent.id);
+        seen.add(precedent.id);
+      }
+    }
+    this.closeoutPrecedentIds.set(key, ids);
+    const currentById = new Map(current.map((precedent) => [precedent.id, precedent]));
+    const durableById = new Map(this.dataSource.precedents().map((precedent) => [precedent.id, precedent]));
+    return ids.flatMap((id) => {
+      const precedent = currentById.get(id) ?? durableById.get(id);
+      return precedent ? [precedent] : [];
+    });
   }
 
   /** The below-body region: the input box for a session, else a single prompt line. */
@@ -1006,7 +1016,8 @@ export class HelmApp implements Component {
     if (isDeclined) declined.add(precedent.id);
     else declined.delete(precedent.id);
     this.declined.set(key, declined);
-    this.dataSource.setPrecedentDeclined?.(precedent, isDeclined);
+    if (isDeclined) this.dataSource.declinePrecedent(precedent.id);
+    else this.dataSource.setPrecedentDeclined(precedent.id, false);
     this.tui.requestRender();
   }
 

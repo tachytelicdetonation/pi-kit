@@ -13,21 +13,24 @@
 import type { Escalation, Precedent } from "./types.js";
 
 /**
- * Merge closeout proposal copies with their durable records. Stored records are
- * canonical because they carry operator state (`declined` / `appliesTo`) that a
- * closeout receipt may predate. Declined or already-applied records are omitted.
+ * Merge closeout proposals with their durable lifecycle state. The latest proposal
+ * remains authoritative for its payload; stored records contribute only lifecycle
+ * fields (`declined` / `appliesTo`). Declined or handed-off records are omitted.
  */
 export function canonicalProposedPrecedents(
   proposals: readonly Precedent[],
   stored: readonly Precedent[],
 ): Precedent[] {
+  const latestProposalById = new Map(proposals.map((precedent) => [precedent.id, precedent]));
   const storedById = new Map(stored.map((precedent) => [precedent.id, precedent]));
-  const seen = new Set<string>();
+  const orderedIds = [...new Set([...proposals.map((precedent) => precedent.id), ...stored.map((precedent) => precedent.id)])];
   const result: Precedent[] = [];
-  for (const candidate of [...proposals, ...stored]) {
-    if (seen.has(candidate.id)) continue;
-    seen.add(candidate.id);
-    const canonical = storedById.get(candidate.id) ?? candidate;
+  for (const id of orderedIds) {
+    const proposal = latestProposalById.get(id);
+    const durable = storedById.get(id);
+    const canonical = proposal && durable
+      ? { ...proposal, declined: durable.declined, appliesTo: durable.appliesTo }
+      : (proposal ?? durable)!;
     if (canonical.declined || canonical.appliesTo) continue;
     result.push(canonical);
   }

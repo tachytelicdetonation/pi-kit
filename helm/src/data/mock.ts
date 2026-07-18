@@ -512,6 +512,7 @@ export class MockDataSource implements DataSource {
   private readonly intakes = new Map<string, IntakeDraft>();
   private readonly loopDrafts = new Map<string, LoopDraft>();
   private readonly store: HelmStore;
+  private readonly observedPrecedents = new Map<string, Precedent>();
   private readonly showDigest: boolean;
 
   /**
@@ -578,14 +579,22 @@ export class MockDataSource implements DataSource {
   }
 
   precedents(): Precedent[] {
-    return this.store.getState().precedents;
+    return this.store.getState().precedents.map((durable) => {
+      const latest = this.observedPrecedents.get(durable.id);
+      return latest
+        ? { ...latest, declined: durable.declined, appliesTo: durable.appliesTo }
+        : durable;
+    });
   }
 
   declinePrecedent(id: string): void {
-    this.store.declinePrecedent(id);
+    this.setPrecedentDeclined(id, true);
   }
 
-  setPrecedentDeclined(precedent: Precedent, declined: boolean): void {
+  setPrecedentDeclined(id: string, declined: boolean): void {
+    const precedent = this.observedPrecedents.get(id)
+      ?? this.store.getState().precedents.find((item) => item.id === id);
+    if (!precedent) return;
     this.store.setPrecedentDeclined(precedent, declined);
   }
 
@@ -631,6 +640,7 @@ export class MockDataSource implements DataSource {
   getCloseout(goalId: string): Closeout | undefined {
     if (!goalId) return undefined;
     const seed = seedCloseout(goalId);
+    for (const precedent of seed.proposedPrecedents) this.observedPrecedents.set(precedent.id, precedent);
     // Merge the precedents recorded via decide (the SAME store as 7b) with the
     // proposed ones, then drop declined/applied records so they are not re-proposed.
     const proposedPrecedents = canonicalProposedPrecedents(seed.proposedPrecedents, this.store.getState().precedents);

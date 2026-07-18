@@ -73,7 +73,7 @@ export function renderCloseout(
   // ── (4) the action line (or applied confirmation) + the next nudge ───────
   if (view.applied) {
     lines.push(
-      clip(`${paint(theme, PALETTE.success, "✓")} ${paint(theme, PALETTE.dim, "precedents applied to CLAUDE.md / skills")}`, w),
+      clip(`${paint(theme, PALETTE.success, "✓")} ${paint(theme, PALETTE.dim, "precedents handed off for repository guidance")}`, w),
     );
   } else {
     lines.push(actionLine(theme, w));

@@ -266,8 +266,8 @@ export interface Precedent {
   rationale: string;
   /** When true, the precedent is NEVER auto-applied (declined in 7d). */
   declined?: boolean;
-  /** Where the precedent was proposed to live, if applied (7d). */
-  appliesTo?: "claudeMd" | "skill";
+  /** Durable application lifecycle marker; `handoff` names no unconfirmed destination. */
+  appliesTo?: "claudeMd" | "skill" | "handoff";
   /** Goal whose escalation produced this decision, when attributable. */
   goalId?: string;
 }

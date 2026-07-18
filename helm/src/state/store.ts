@@ -246,14 +246,14 @@ export class HelmStore {
     return precedent ? this.setPrecedentDeclined(precedent, true) : false;
   }
 
-  /** Upsert the durable operator decision so closeout receipt copies cannot override it. */
+  /** Upsert current proposal content while preserving only prior durable lifecycle state. */
   setPrecedentDeclined(precedent: Precedent, declined: boolean): boolean {
     const existing = this.state.precedents.find((item) => item.id === precedent.id);
     if (existing?.declined === declined) {
       this.emit();
       return false;
     }
-    const canonical = { ...(existing ?? precedent), declined };
+    const canonical = { ...precedent, appliesTo: existing?.appliesTo, declined };
     this.state = {
       ...this.state,
       precedents: existing
@@ -264,15 +264,14 @@ export class HelmStore {
     return true;
   }
 
-  /** Mark an accepted closeout precedent as durably applied to repository guidance. */
+  /** Mark an accepted closeout precedent as durably handed off, without inventing a destination. */
   applyPrecedent(precedent: Precedent): boolean {
     const existing = this.state.precedents.find((item) => item.id === precedent.id);
-    const appliesTo = precedent.appliesTo ?? existing?.appliesTo ?? "claudeMd";
-    if (existing?.appliesTo === appliesTo) {
+    if (existing?.appliesTo === "handoff") {
       this.emit();
       return false;
     }
-    const canonical = { ...(existing ?? precedent), declined: false, appliesTo };
+    const canonical: Precedent = { ...precedent, declined: false, appliesTo: "handoff" };
     this.state = {
       ...this.state,
       precedents: existing

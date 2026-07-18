@@ -167,16 +167,90 @@ function textLines(value: string): string[] {
   return value ? value.replace(/\n$/, "").split("\n") : [];
 }
 
-function lineDiff(oldText: string, newText: string): { added: number; removed: number; lines: string[] } {
+const MAX_LCS_LINES_PER_SIDE = 1_500;
+const MAX_DIFF_PREVIEW_LINES = 3;
+
+interface LineDiff {
+  added: number;
+  removed: number;
+  peek: string[];
+  moreCount: number;
+}
+
+function lineDiff(oldText: string, newText: string): LineDiff {
+  if (oldText === newText) return { added: 0, removed: 0, peek: [], moreCount: 0 };
+
   const oldLines = textLines(oldText);
   const newLines = textLines(newText);
-  const lengths = Array.from({ length: oldLines.length + 1 }, () => new Array<number>(newLines.length + 1).fill(0));
+  const peek: string[] = [];
+  const remember = (line: string): void => {
+    if (peek.length < MAX_DIFF_PREVIEW_LINES) peek.push(line);
+  };
 
-  for (let oldIndex = oldLines.length - 1; oldIndex >= 0; oldIndex -= 1) {
-    for (let newIndex = newLines.length - 1; newIndex >= 0; newIndex -= 1) {
-      lengths[oldIndex]![newIndex] = oldLines[oldIndex] === newLines[newIndex]
-        ? lengths[oldIndex + 1]![newIndex + 1]! + 1
-        : Math.max(lengths[oldIndex + 1]![newIndex]!, lengths[oldIndex]![newIndex + 1]!);
+  if (oldLines.length === 0) {
+    for (let index = 0; index < Math.min(newLines.length, MAX_DIFF_PREVIEW_LINES); index += 1) {
+      remember(`${index + 1} + ${newLines[index]}`);
+    }
+    return { added: newLines.length, removed: 0, peek, moreCount: Math.max(0, newLines.length - peek.length) };
+  }
+  if (newLines.length === 0) {
+    for (let index = 0; index < Math.min(oldLines.length, MAX_DIFF_PREVIEW_LINES); index += 1) {
+      remember(`${index + 1} − ${oldLines[index]}`);
+    }
+    return { added: 0, removed: oldLines.length, peek, moreCount: Math.max(0, oldLines.length - peek.length) };
+  }
+
+  let prefixLength = 0;
+  while (
+    prefixLength < oldLines.length
+    && prefixLength < newLines.length
+    && oldLines[prefixLength] === newLines[prefixLength]
+  ) prefixLength += 1;
+
+  let oldEnd = oldLines.length;
+  let newEnd = newLines.length;
+  while (
+    oldEnd > prefixLength
+    && newEnd > prefixLength
+    && oldLines[oldEnd - 1] === newLines[newEnd - 1]
+  ) {
+    oldEnd -= 1;
+    newEnd -= 1;
+  }
+
+  const oldMiddle = oldLines.slice(prefixLength, oldEnd);
+  const newMiddle = newLines.slice(prefixLength, newEnd);
+  if (oldMiddle.length === 0 || newMiddle.length === 0) {
+    for (let index = 0; index < oldMiddle.length; index += 1) {
+      remember(`${prefixLength + index + 1} − ${oldMiddle[index]}`);
+    }
+    for (let index = 0; index < newMiddle.length; index += 1) {
+      remember(`${prefixLength + index + 1} + ${newMiddle[index]}`);
+    }
+    const changed = oldMiddle.length + newMiddle.length;
+    return { added: newMiddle.length, removed: oldMiddle.length, peek, moreCount: Math.max(0, changed - peek.length) };
+  }
+
+  if (oldMiddle.length > MAX_LCS_LINES_PER_SIDE || newMiddle.length > MAX_LCS_LINES_PER_SIDE) {
+    for (let index = 0; index < oldMiddle.length && peek.length < MAX_DIFF_PREVIEW_LINES; index += 1) {
+      remember(`${prefixLength + index + 1} − ${oldMiddle[index]}`);
+    }
+    for (let index = 0; index < newMiddle.length && peek.length < MAX_DIFF_PREVIEW_LINES; index += 1) {
+      remember(`${prefixLength + index + 1} + ${newMiddle[index]}`);
+    }
+    const changed = oldMiddle.length + newMiddle.length;
+    return { added: newMiddle.length, removed: oldMiddle.length, peek, moreCount: Math.max(0, changed - peek.length) };
+  }
+
+  const columns = newMiddle.length + 1;
+  const lengths = new Uint32Array((oldMiddle.length + 1) * columns);
+  const at = (oldIndex: number, newIndex: number): number => oldIndex * columns + newIndex;
+
+  for (let oldIndex = oldMiddle.length - 1; oldIndex >= 0; oldIndex -= 1) {
+    for (let newIndex = newMiddle.length - 1; newIndex >= 0; newIndex -= 1) {
+      lengths[at(oldIndex, newIndex)] = oldMiddle[oldIndex] === newMiddle[newIndex]
+        ? lengths[at(oldIndex + 1, newIndex + 1)]! + 1
+        : Math.max(lengths[at(oldIndex + 1, newIndex)]!, lengths[at(oldIndex, newIndex + 1)]!);
     }
   }
 
@@ -184,22 +258,21 @@ function lineDiff(oldText: string, newText: string): { added: number; removed: n
   let newIndex = 0;
   let added = 0;
   let removed = 0;
-  const lines: string[] = [];
-  while (oldIndex < oldLines.length || newIndex < newLines.length) {
-    if (oldIndex < oldLines.length && newIndex < newLines.length && oldLines[oldIndex] === newLines[newIndex]) {
+  while (oldIndex < oldMiddle.length || newIndex < newMiddle.length) {
+    if (oldIndex < oldMiddle.length && newIndex < newMiddle.length && oldMiddle[oldIndex] === newMiddle[newIndex]) {
       oldIndex += 1;
       newIndex += 1;
-    } else if (newIndex < newLines.length && (oldIndex >= oldLines.length || lengths[oldIndex]![newIndex + 1]! > lengths[oldIndex + 1]![newIndex]!)) {
+    } else if (newIndex < newMiddle.length && (oldIndex >= oldMiddle.length || lengths[at(oldIndex, newIndex + 1)]! > lengths[at(oldIndex + 1, newIndex)]!)) {
       added += 1;
-      lines.push(`${newIndex + 1} + ${newLines[newIndex]}`);
+      remember(`${prefixLength + newIndex + 1} + ${newMiddle[newIndex]}`);
       newIndex += 1;
     } else {
       removed += 1;
-      lines.push(`${oldIndex + 1} − ${oldLines[oldIndex]}`);
+      remember(`${prefixLength + oldIndex + 1} − ${oldMiddle[oldIndex]}`);
       oldIndex += 1;
     }
   }
-  return { added, removed, lines };
+  return { added, removed, peek, moreCount: Math.max(0, added + removed - peek.length) };
 }
 
 function diffReceipt(entry: AgentHistoryEntry, result?: AgentHistoryEntry): DiffReceipt {
@@ -217,7 +290,11 @@ function diffReceipt(entry: AgentHistoryEntry, result?: AgentHistoryEntry): Diff
   let newLine = 1;
   let added = 0;
   let removed = 0;
-  const diffLines: string[] = [];
+  let measuredMoreCount: number | undefined;
+  const peek: string[] = [];
+  const remember = (line: string): void => {
+    if (peek.length < MAX_DIFF_PREVIEW_LINES) peek.push(line);
+  };
   for (const raw of patch.split("\n")) {
     const hunk = raw.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
     if (hunk) {
@@ -225,11 +302,11 @@ function diffReceipt(entry: AgentHistoryEntry, result?: AgentHistoryEntry): Diff
       newLine = Number(hunk[2]);
     } else if (raw.startsWith("+") && !raw.startsWith("+++")) {
       added += 1;
-      diffLines.push(`${newLine} + ${raw.slice(1)}`);
+      remember(`${newLine} + ${raw.slice(1)}`);
       newLine += 1;
     } else if (raw.startsWith("-") && !raw.startsWith("---")) {
       removed += 1;
-      diffLines.push(`${oldLine} − ${raw.slice(1)}`);
+      remember(`${oldLine} − ${raw.slice(1)}`);
       oldLine += 1;
     } else if (!raw.startsWith("\\") && !raw.startsWith("***")) {
       oldLine += 1;
@@ -240,12 +317,12 @@ function diffReceipt(entry: AgentHistoryEntry, result?: AgentHistoryEntry): Diff
     const measured = lineDiff(oldText ?? "", newText ?? "");
     removed = measured.removed;
     added = measured.added;
-    diffLines.push(...measured.lines);
+    peek.push(...measured.peek);
+    measuredMoreCount = measured.moreCount;
   }
   added = explicitAdded ?? added;
   removed = explicitRemoved ?? removed;
-  const peek = diffLines.slice(0, 3);
-  return { path, added, removed, peek, moreCount: Math.max(0, diffLines.length - peek.length) };
+  return { path, added, removed, peek, moreCount: measuredMoreCount ?? Math.max(0, added + removed - peek.length) };
 }
 
 function testCount(text: string): number {

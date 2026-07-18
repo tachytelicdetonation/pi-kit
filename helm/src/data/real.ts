@@ -152,6 +152,7 @@ export class RealDataSource implements DataSource {
   private readonly intakes = new Map<string, IntakeDraft>();
   private readonly loopDrafts = new Map<string, LoopDraft>();
   private readonly closeouts = new Map<string, Closeout>();
+  private readonly observedPrecedents = new Map<string, Precedent>();
   private readonly loopTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private domain: PersistedHelmDomain;
   private readonly launchShouldShowDigest: boolean;
@@ -245,12 +246,13 @@ export class RealDataSource implements DataSource {
     const checkpoint = this.store.getState().pauseCheckpoint;
     if (!this.store.getState().pausedAll || !checkpoint) return;
     const now = Date.now();
+    const pausedDurationMs = Math.max(0, now - checkpoint.pausedAt);
     this.deps.workflows.resumeAll(checkpoint.runIds);
     for (const paused of checkpoint.loops) {
       const loop = this.store.getState().loops.find((item) => item.id === paused.loopId);
       if (!loop || loop.health === "paused") continue;
       const prePauseDeadline = checkpoint.pausedAt + paused.remainingDelayMs;
-      const nextRunAtMs = Math.max(now + paused.remainingDelayMs, prePauseDeadline);
+      const nextRunAtMs = prePauseDeadline + pausedDurationMs;
       this.store.updateScheduledLoop(loop.id, {
         nextRunAtMs,
         nextRun: `next ${new Date(nextRunAtMs).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`,
@@ -258,7 +260,7 @@ export class RealDataSource implements DataSource {
     }
     this.store.resumeAll();
     for (const loop of this.store.getState().loops) this.armLoop(loop);
-    this.appendAudit("resume", [...checkpoint.runIds, ...checkpoint.loops.map((item) => item.loopId)], "Resumed global Helm checkpoint", `Resumed only checkpointed work after ${now - checkpoint.pausedAt}ms paused.`);
+    this.appendAudit("resume", [...checkpoint.runIds, ...checkpoint.loops.map((item) => item.loopId)], "Resumed global Helm checkpoint", `Resumed only checkpointed work after ${pausedDurationMs}ms paused.`);
     this.persist();
   }
 
@@ -296,21 +298,26 @@ export class RealDataSource implements DataSource {
   }
 
   precedents(): Precedent[] {
-    return this.store.getState().precedents;
+    return this.store.getState().precedents.map((durable) => {
+      const latest = this.observedPrecedents.get(durable.id);
+      return latest
+        ? { ...latest, declined: durable.declined, appliesTo: durable.appliesTo }
+        : durable;
+    });
   }
 
   declinePrecedent(id: string): void {
-    if (this.store.declinePrecedent(id)) {
-      this.appendAudit("precedentDeclined", [id], "Declined a precedent", "The precedent will not be proposed or auto-applied again.");
-      this.persist();
-    }
+    this.setPrecedentDeclined(id, true);
   }
 
-  setPrecedentDeclined(precedent: Precedent, declined: boolean): void {
+  setPrecedentDeclined(id: string, declined: boolean): void {
+    const precedent = this.observedPrecedents.get(id)
+      ?? this.store.getState().precedents.find((item) => item.id === id);
+    if (!precedent) return;
     if (!this.store.setPrecedentDeclined(precedent, declined)) return;
     this.appendAudit(
       declined ? "precedentDeclined" : "precedentAccepted",
-      [precedent.id],
+      [id],
       declined ? "Declined a precedent" : "Re-accepted a precedent",
       declined ? "The precedent will not be proposed or auto-applied again." : "The precedent is eligible for closeout application again.",
     );
@@ -382,6 +389,7 @@ export class RealDataSource implements DataSource {
     const stored = this.closeouts.get(goalId);
     const seed = stored ?? (this.deps.repository ? this.buildCloseout(goalId) : this.deps.synthCloseout(goalId));
     if (!seed) return undefined;
+    for (const precedent of seed.proposedPrecedents) this.observedPrecedents.set(precedent.id, precedent);
     const proposedPrecedents = canonicalProposedPrecedents(seed.proposedPrecedents, this.store.getState().precedents);
     return { ...seed, proposedPrecedents };
   }
