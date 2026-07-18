@@ -28,6 +28,7 @@ export type Key =
         | "left"
         | "right"
         | "backspace"
+        | "ctrlQ"
         | "ctrlU"
         | "ctrlP";
     }
@@ -82,6 +83,8 @@ export function decodeKey(data: string): Key | null {
         return { t: "ctrlU" };
       case "\x10":
         return { t: "ctrlP" };
+      case "\x11":
+        return { t: "ctrlQ" };
       case "\x1b":
         // A BARE escape byte — this is the esc key, not the lead of an
         // (unarrived) arrow sequence. No timeout, no ambiguity.

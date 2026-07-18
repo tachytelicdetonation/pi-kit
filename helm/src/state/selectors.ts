@@ -38,16 +38,16 @@ export function footerModel(state: HelmState): HelmFooterModel {
   return state.footer;
 }
 
-/** A single selectable row on the home screen (needs-you / workflow / loop). */
+/** A single selectable row on the home screen (needs-you / goal / workflow / loop). */
 export interface SelectableRow {
-  kind: "escalation" | "workflow" | "loop";
+  kind: "escalation" | "goal" | "workflow" | "loop";
   id: string;
 }
 
 /**
  * The flat, ordered list of selectable rows — the SAME order the renderer walks:
- * escalations first, then each goal's top-level workflows (in goal order), then
- * loops. Section/goal headers are NOT selectable. The renderer's highlight index
+ * escalations first, then each goal followed by its top-level workflows, then
+ * loops. Section headers are NOT selectable. The renderer's highlight index
  * and the key dispatcher's selection index both index into this list, so they can
  * never disagree about which row is "current".
  */
@@ -55,6 +55,7 @@ export function selectableRows(state: HelmState): SelectableRow[] {
   const rows: SelectableRow[] = [];
   for (const escalation of state.escalations) rows.push({ kind: "escalation", id: escalation.id });
   for (const goal of state.goals) {
+    rows.push({ kind: "goal", id: goal.id });
     for (const workflow of workflowsForGoal(state, goal.id)) rows.push({ kind: "workflow", id: workflow.id });
   }
   for (const loop of state.loops) rows.push({ kind: "loop", id: loop.id });

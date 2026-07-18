@@ -40,8 +40,8 @@ import { renderMissionControl } from "./screens/mission-control.js";
 import { overlayPopover, usagePopoverLines } from "./screens/popover.js";
 import { renderSearch } from "./screens/search.js";
 import { renderReceipts, renderSession } from "./screens/session.js";
-import { activeLoopCount, needsYouCount, nextNeedsYouId, selectableCount, selectableRows } from "./state/selectors.js";
-import type { HelmState, TrialState } from "./state/types.js";
+import { activeLoopCount, needsYouCount, nextNeedsYouId, selectableCount, selectableRows, workflowsForGoal } from "./state/selectors.js";
+import type { Closeout, HelmState, TrialState } from "./state/types.js";
 import { GLYPH, paint, PALETTE, type ThemeLike } from "./theme.js";
 
 /**
@@ -94,6 +94,8 @@ export class HelmApp implements Component {
   private readonly trials = new Map<string, TrialState>();
   /** Closeout screen keys whose precedents have been applied (7d `a`). */
   private readonly applied = new Set<string>();
+  /** Per-closeout precedent ids currently declined by the operator. */
+  private readonly declined = new Map<string, Set<string>>();
   /** Last-seen needs-you count — drives the bell-on-new-escalation heuristic. */
   private prevEscalationCount: number;
   private readonly dataSource: DataSource;
@@ -368,7 +370,9 @@ export class HelmApp implements Component {
       case "closeout": {
         const closeout = this.dataSource.getCloseout(top.goalId);
         if (!closeout) return [];
-        return renderCloseout(closeout, this.theme, width, height, { applied: this.applied.has(this.screenKey(top)) });
+        return renderCloseout(this.closeoutForRender(top, closeout), this.theme, width, height, {
+          applied: this.applied.has(this.screenKey(top)),
+        });
       }
       case "search":
         return renderSearch(
@@ -390,6 +394,21 @@ export class HelmApp implements Component {
   private trialState(top: Screen): TrialState {
     return this.trials.get(this.screenKey(top))
       ?? (top.id === "loopBuilder" && this.dataSource.getLoopDraft(top.loopId)?.trialPassed ? "passed" : "idle");
+  }
+
+  /** Add dim + strikethrough SGR styling without changing the closeout renderer's public surface. */
+  private closeoutForRender(top: Screen & { id: "closeout" }, closeout: Closeout): Closeout {
+    const declined = this.declined.get(this.screenKey(top));
+    if (!declined?.size) return closeout;
+    const strike = (text: string) => `\x1b[2;9m${text}\x1b[22;29m`;
+    return {
+      ...closeout,
+      proposedPrecedents: closeout.proposedPrecedents.map((precedent) =>
+        declined.has(precedent.id)
+          ? { ...precedent, question: strike(precedent.question), decision: strike(precedent.decision) }
+          : precedent,
+      ),
+    };
   }
 
   /** The below-body region: the input box for a session, else a single prompt line. */
@@ -437,7 +456,7 @@ export class HelmApp implements Component {
 
   /** A brief per-screen key hint for `?` help (no literal "?" so it never types). */
   private helpHint(top: Screen): string {
-    const global = "/ search · ctrl+u usage · ctrl+p pause all · tab next needs-you";
+    const global = "/ search · ctrl+u usage · ctrl+p pause all · ctrl+q exit · tab next needs-you";
     switch (top.id) {
       case "home":
         return `enter drill · j/k move · p pause · n new goal · N new loop · ${global}`;
@@ -571,16 +590,22 @@ export class HelmApp implements Component {
 
   /** Key dispatch pipeline (Gmail rule ordering). See module and extension docs. */
   private dispatch(data: string): void {
-    // (1) The usage popover is an overlay slot: ANY input closes it FIRST and is
-    // consumed — even bytes that don't decode to a modelled key — so it never
-    // disturbs navigation or the prompt. Checked before decode for exactly that.
+    const key = decodeKey(data);
+    // ctrl+q is the one unconditional exit chord: it works from prompts,
+    // confirmations, search, and overlays alike.
+    if (key?.t === "ctrlQ") {
+      this.done();
+      return;
+    }
+
+    // (1) The usage popover is an overlay slot: any other input closes it FIRST
+    // and is consumed, even bytes that don't decode to a modelled key.
     if (this.popoverOpen) {
       this.popoverOpen = false;
       this.tui.requestRender();
       return;
     }
 
-    const key = decodeKey(data);
     if (!key) return;
 
     const top = this.top();
@@ -680,6 +705,8 @@ export class HelmApp implements Component {
         return this.togglePopover();
       case "ctrlP":
         return this.togglePauseAll();
+      case "ctrlQ":
+        return this.done();
       case "tab":
         return this.triageWalk();
       default:
@@ -745,11 +772,19 @@ export class HelmApp implements Component {
     if (top.id === "home") {
       const rows = selectableRows(this.dataSource.snapshot());
       const row = rows[this.getSelection(top)];
-      // A workflow row drills into 6c; a needs-you row opens its 7b card (the safe
-      // choice — opening, not deciding); a loop row opens its 7a builder.
+      // Goal rows route by lifecycle; the remaining rows retain their direct cards.
       if (row?.kind === "workflow") this.push({ id: "drillin", workflowId: row.id });
       else if (row?.kind === "escalation") this.push({ id: "escalation", escalationId: row.id });
       else if (row?.kind === "loop") this.push({ id: "loopBuilder", loopId: row.id });
+      else if (row?.kind === "goal") {
+        const state = this.dataSource.snapshot();
+        const goal = state.goals.find((item) => item.id === row.id);
+        if (goal?.phase === "complete") this.push({ id: "closeout", goalId: goal.id });
+        else if (goal?.phase === "running") {
+          const topWorkflow = workflowsForGoal(state, goal.id)[0];
+          if (topWorkflow) this.push({ id: "drillin", workflowId: topWorkflow.id });
+        }
+      }
       return;
     }
     if (top.id === "drillin") {
@@ -880,6 +915,8 @@ export class HelmApp implements Component {
       return;
     }
     if (ch === "e") {
+      if (trial === "trialing") return this.showNotice("Trial in progress; editing is locked.");
+      if (trial === "passed") return this.showNotice("Press r to revise before editing a passed trial.");
       this.inputIntent = { kind: "loopEdit", loopId: top.loopId };
       this.tui.requestRender();
       return;
@@ -887,7 +924,14 @@ export class HelmApp implements Component {
     if (ch === "x") return this.confirm("discard this loop draft", () => {
       this.runCommand({ type: "loop.discardDraft", loopId: top.loopId }, () => this.ascend());
     });
+    if (trial === "trialing") return this.showNotice("Trial in progress; editing is locked.");
+    if (trial === "passed") return this.showNotice("Press r to revise before editing a passed trial.");
     this.startTyping(top, ch);
+  }
+
+  private showNotice(message: string): void {
+    this.notice = message;
+    this.tui.requestRender();
   }
 
   /**
@@ -929,15 +973,32 @@ export class HelmApp implements Component {
    * line), `r` full report, `x` archive the goal and return home.
    */
   private handleCloseoutChar(top: Screen & { id: "closeout" }, ch: string): void {
+    if (ch >= "1" && ch <= "9") {
+      return this.toggleCloseoutPrecedent(top, ch.charCodeAt(0) - "1".charCodeAt(0));
+    }
     if (ch === "a") return this.applyPrecedents(top);
     if (ch === "r") return this.runCommand({ type: "goal.report", goalId: top.goalId });
     if (ch === "x") return this.archiveCurrentGoal(top);
     this.startTyping(top, ch);
   }
 
+  /** 7d `1-9`: toggle the numbered proposal between accepted and declined. */
+  private toggleCloseoutPrecedent(top: Screen & { id: "closeout" }, index: number): void {
+    const precedent = this.dataSource.getCloseout(top.goalId)?.proposedPrecedents[index];
+    if (!precedent) return;
+    const key = this.screenKey(top);
+    const declined = this.declined.get(key) ?? new Set<string>();
+    if (declined.has(precedent.id)) declined.delete(precedent.id);
+    else declined.add(precedent.id);
+    this.declined.set(key, declined);
+    this.tui.requestRender();
+  }
+
   /** 7d `a`: confirm, then hand the repository guidance edit to Pi. */
   private applyPrecedents(top: Screen & { id: "closeout" }): void {
     this.confirm("apply these precedents to repository guidance", () => {
+      const source = this.dataSource as DataSource & { declinePrecedent?: (id: string) => void };
+      for (const id of this.declined.get(this.screenKey(top)) ?? []) source.declinePrecedent?.(id);
       this.applied.add(this.screenKey(top));
       this.runCommand({ type: "goal.applyPrecedents", goalId: top.goalId });
     });
@@ -958,6 +1019,15 @@ export class HelmApp implements Component {
   private decideOption(escalationId: string, index: number): void {
     const escalation = this.dataSource.getEscalation(escalationId);
     if (!escalation || index < 0 || index >= escalation.options.length) return;
+    const option = escalation.options[index];
+    if (option?.requiresConfirm) {
+      this.confirm(`choose option ${index + 1}: ${option.text}`, () => this.commitOption(escalationId, index));
+      return;
+    }
+    this.commitOption(escalationId, index);
+  }
+
+  private commitOption(escalationId: string, index: number): void {
     // Await the decision before recomputing the queue: a real (async) DataSource
     // may defer the store mutation, and reading listEscalations() before it lands
     // would strand the operator on the just-decided card. handleInput stays sync;
@@ -1008,11 +1078,6 @@ export class HelmApp implements Component {
 
   /** Per-screen printable keys while the prompt is empty (the Gmail rule). */
   private handleChar(top: Screen, ch: string): void {
-    // `q` always quits (with a non-empty buffer this branch is never reached).
-    if (ch === "q") {
-      this.done();
-      return;
-    }
     // `/` opens search from ANYWHERE (a global, before any per-screen handler).
     if (ch === "/") return this.openSearch();
 
@@ -1121,15 +1186,15 @@ export class HelmApp implements Component {
   }
 
   /**
-   * `p` (home): toggle the selected workflow or loop. An empty list falls back
-   * to pause-all so the key always has a safe, reversible result.
+   * `p` (home): toggle the selected goal, workflow, or loop. Escalations and an
+   * empty selection are deliberate no-ops; only ctrl+p controls pause-all.
    */
   private pauseSelected(top: Screen): void {
     const rows = selectableRows(this.dataSource.snapshot());
     const row = rows[this.getSelection(top)];
-    if (row?.kind === "workflow") this.runCommand({ type: "workflow.togglePause", workflowId: row.id });
+    if (row?.kind === "goal") this.runCommand({ type: "goal.togglePause", goalId: row.id });
+    else if (row?.kind === "workflow") this.runCommand({ type: "workflow.togglePause", workflowId: row.id });
     else if (row?.kind === "loop") this.runCommand({ type: "loop.togglePause", loopId: row.id });
-    else this.dataSource.pauseAll();
   }
 
   invalidate(): void {

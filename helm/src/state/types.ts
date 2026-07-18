@@ -63,6 +63,7 @@ export interface Loop {
 /** One numbered option on a 7b escalation card. Exactly one is `recommended`. */
 export interface EscalationOption {
   text: string;
+  requiresConfirm?: boolean;
   /** pi's recommended option — highlighted GREEN on the card. At most one true. */
   recommended?: boolean;
 }
