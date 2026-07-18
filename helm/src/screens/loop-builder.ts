@@ -17,7 +17,7 @@
  * footer. Every line is ANSI-safe and clipped to at most `height` via windowLines.
  */
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { column, windowLines, wrapPlain } from "./../chrome.js";
+import { actionGroup, column, windowLines, wrapPlain } from "./../chrome.js";
 import { GLYPH, paint, PALETTE, type ThemeLike } from "./../theme.js";
 import type { LoopDraft, TrialState } from "./../state/types.js";
 
@@ -26,8 +26,13 @@ const INDENT = "  ";
 /** The `trigger / steps / skips / guardrails` label column width. */
 const LABEL_COL = 11;
 
+/** Screen-local model context; shared state remains unchanged. */
+export interface LoopBuilderRenderModel extends LoopDraft {
+  sessionModel?: string;
+}
+
 export function renderLoopBuilder(
-  draft: LoopDraft,
+  draft: LoopBuilderRenderModel,
   theme: ThemeLike,
   width: number,
   height: number,
@@ -88,10 +93,11 @@ function pushRow(lines: string[], theme: ThemeLike, label: string, value: string
  * word-wrapped with a hanging indent so the per-step model guardrail is never
  * truncated away at narrow widths (the sibling rows wrap the same way).
  */
-function pushGuardrails(lines: string[], theme: ThemeLike, draft: LoopDraft, width: number): void {
+function pushGuardrails(lines: string[], theme: ThemeLike, draft: LoopBuilderRenderModel, width: number): void {
   const sep = ` ${paint(theme, PALETTE.dim, "·")} `;
   let painted = draft.guardrails.map((chip) => paint(theme, PALETTE.mid, chip)).join(sep);
-  if (draft.guardrailModel) {
+  const showModel = draft.guardrailModel && draft.guardrailModel.model !== draft.sessionModel;
+  if (showModel && draft.guardrailModel) {
     painted += `${sep}${paint(theme, PALETTE.purple, draft.guardrailModel.model)} ${paint(theme, PALETTE.mid, draft.guardrailModel.note)}`;
   }
   const label = `${paint(theme, PALETTE.dim, column("guardrails", LABEL_COL))} `;
@@ -103,7 +109,7 @@ function pushGuardrails(lines: string[], theme: ThemeLike, draft: LoopDraft, wid
   // preserved; per-segment color simplified to `mid`) like the sibling rows.
   const plainSep = " · ";
   const plainChips = draft.guardrails.join(plainSep);
-  const plainModel = draft.guardrailModel
+  const plainModel = showModel && draft.guardrailModel
     ? `${plainSep}${draft.guardrailModel.model} ${draft.guardrailModel.note}`
     : "";
   const textWidth = Math.max(1, width - INDENT.length - LABEL_COL - 1);
@@ -117,16 +123,21 @@ function pushGuardrails(lines: string[], theme: ThemeLike, draft: LoopDraft, wid
 function actionLine(theme: ThemeLike, trial: TrialState, width: number): string {
   const dot = ` ${paint(theme, PALETTE.dim, "·")} `;
   const key = (k: string, label: string) => `${paint(theme, PALETTE.brand, k)} ${paint(theme, PALETTE.dim, label)}`;
+  const inner = Math.max(0, width - INDENT.length);
   let content: string;
   if (trial === "trialing") {
     content = paint(theme, PALETTE.warning, "running trial under full review …");
   } else if (trial === "passed") {
-    content =
-      `${paint(theme, PALETTE.success, "✓")} ${paint(theme, PALETTE.dim, "trial passed under review")}${dot}` +
-      `${key("s", "accept schedule")}${dot}${key("r", "revise")}${dot}${key("x", "discard")}`;
+    const status = `${paint(theme, PALETTE.success, "✓")} ${paint(theme, PALETTE.dim, "trial passed under review")}`;
+    const actions = actionGroup(
+      theme,
+      [key("s", "accept schedule"), key("r", "revise"), key("x", "discard")],
+      Math.max(0, inner - visibleWidth(status) - visibleWidth(dot)),
+    );
+    content = actions ? `${status}${dot}${actions}` : status;
   } else {
     // idle or failed (builder reopened) — the same primary action set.
-    content = `${key("t", "trial run")}${dot}${key("e", "edit")}${dot}${key("x", "discard")}`;
+    content = actionGroup(theme, [key("t", "trial run"), key("e", "edit"), key("x", "discard")], inner);
   }
   return clip(content, width);
 }

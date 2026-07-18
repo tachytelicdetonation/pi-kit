@@ -58,6 +58,26 @@ export function spring(theme: ThemeLike, left: string, right: string, width: num
 }
 
 /**
+ * Render priority-ordered action segments separated by ` · ` without ever
+ * cutting a segment. Segments are ordered highest priority first; once the next
+ * segment does not fit, it and every lower-priority segment are dropped.
+ */
+export function actionGroup(theme: ThemeLike, segments: readonly string[], width: number): string {
+  const w = safeWidth(width);
+  if (w <= 0) return "";
+
+  const separator = ` ${paint(theme, PALETTE.dim, "·")} `;
+  let rendered = "";
+  for (const segment of segments) {
+    if (!segment) continue;
+    const candidate = rendered ? `${rendered}${separator}${segment}` : segment;
+    if (visibleWidth(candidate) > w) break;
+    rendered = candidate;
+  }
+  return rendered;
+}
+
+/**
  * Fixed-width cell: pad (with spaces) or ANSI-safe-truncate `text` to exactly
  * `width` visible cells. `align` controls which side is padded ("left" pads the
  * right edge, "right" pads the left edge). Result always satisfies

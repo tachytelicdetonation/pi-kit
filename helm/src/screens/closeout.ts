@@ -15,7 +15,7 @@
  * most `height` via windowLines.
  */
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { column, spring, windowLines, wrapPlain } from "./../chrome.js";
+import { actionGroup, column, spring, windowLines, wrapPlain } from "./../chrome.js";
 import { paint, PALETTE, type ThemeLike } from "./../theme.js";
 import type { Closeout } from "./../state/types.js";
 
@@ -115,9 +115,15 @@ function pushRow(lines: string[], theme: ThemeLike, label: string, value: string
 
 /** `a apply precedents · r full report · x archive`. */
 function actionLine(theme: ThemeLike, width: number): string {
-  const dot = ` ${paint(theme, PALETTE.dim, "·")} `;
   const key = (k: string, label: string) => `${paint(theme, PALETTE.brand, k)} ${paint(theme, PALETTE.dim, label)}`;
-  return clip(`${key("a", "apply precedents")}${dot}${key("r", "full report")}${dot}${key("x", "archive")}`, width);
+  return clip(
+    actionGroup(
+      theme,
+      [key("a", "apply precedents"), key("r", "full report"), key("x", "archive")],
+      Math.max(0, width - INDENT.length),
+    ),
+    width,
+  );
 }
 
 /** A left-indented, ANSI-safe line clipped to width. */
