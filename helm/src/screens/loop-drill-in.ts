@@ -30,35 +30,50 @@ export function renderLoopDrillIn(
   const h = Number.isFinite(height) ? Math.max(0, Math.floor(height)) : 0;
   if (w <= 0 || h <= 0) return [];
 
-  const lines: string[] = [];
-
   // ── Stratum 1: loop summary ─────────────────────────────────────────────
-  lines.push(summaryRow(theme, loop, runs.length, w));
-  lines.push("");
+  const summary = [summaryRow(theme, loop, runs.length, w)];
 
   // ── Stratum 2: durable run history ──────────────────────────────────────
-  lines.push(sectionLine(theme, "run history", w));
-  let anchor = lines.length;
-  if (runs.length === 0) {
-    lines.push(headerLine(paint(theme, PALETTE.dim, "no runs yet"), w));
-  } else {
-    runs.forEach((run, index) => {
-      if (index === selection) anchor = lines.length;
-      lines.push(runRow(theme, run, index === selection, w));
-    });
-  }
-  lines.push("");
+  const runRows = runs.length === 0
+    ? [headerLine(paint(theme, PALETTE.dim, "no runs yet"), w)]
+    : runs.map((run, index) => runRow(theme, run, index === selection, w));
 
   // ── Stratum 3: active guardrails + isolated pending trial ───────────────
-  lines.push(sectionLine(theme, "guardrails", w));
+  const guardrails = [sectionLine(theme, "guardrails", w)];
   const active = loop.activeDefinition?.guardrails;
-  if (active) lines.push(guardrailRow(theme, "active", active, false, w));
+  if (active) guardrails.push(guardrailRow(theme, "active", active, false, w));
   const pending = loop.pendingDraft?.guardrails;
   if (pending && !sameGuardrails(active, pending)) {
-    lines.push(guardrailRow(theme, "pending trial", pending, true, w));
+    const label = loop.pendingDraft?.trialPassed === true
+      ? "trial passed · pending schedule"
+      : "pending trial";
+    guardrails.push(guardrailRow(theme, label, pending, true, w));
   }
 
-  return windowLines(theme, lines, anchor, h, w);
+  // Summary and guardrails are fixed strata. Only the run rows consume a
+  // selection-centred scrolling window, so a long history can never displace
+  // the active or pending guardrail state.
+  const runHeader = sectionLine(theme, "run history", w);
+  const separators = h >= summary.length + guardrails.length + 4 ? 2 : 0;
+  const fixedHeight = summary.length + guardrails.length + 1 + separators;
+  const runHeight = Math.max(0, h - fixedHeight);
+  const selected = runs.length === 0 ? 0 : Math.max(0, Math.min(runs.length - 1, selection));
+  const windowedRuns = windowLines(theme, runRows, selected, runHeight, w);
+  const lines = [
+    ...summary,
+    ...(separators ? [""] : []),
+    runHeader,
+    ...windowedRuns,
+    ...(separators ? [""] : []),
+    ...guardrails,
+  ];
+  if (lines.length <= h) return lines;
+
+  // Tiny terminals may not fit even the fixed strata. Preserve their content
+  // by dropping the run header first; render() performs the final unavoidable
+  // clip only when the summary plus guardrails themselves exceed the viewport.
+  const essentialGuardrails = guardrails.length > 1 ? guardrails.slice(1) : guardrails;
+  return [...summary, ...essentialGuardrails].slice(0, h);
 }
 
 function summaryRow(theme: ThemeLike, loop: Loop, runCount: number, width: number): string {
@@ -89,7 +104,8 @@ function guardrailRow(
 ): string {
   const labelColor = pending ? PALETTE.warning : PALETTE.label;
   const chips = guardrails.map((guardrail) => paint(theme, PALETTE.mid, guardrail)).join(` ${paint(theme, PALETTE.dim, "·")} `);
-  return headerLine(`${paint(theme, labelColor, column(label, 15))}${chips}`, width);
+  const labelWidth = Math.max(15, label.length + 1);
+  return headerLine(`${paint(theme, labelColor, column(label, labelWidth))}${chips}`, width);
 }
 
 function outcomeStatus(outcome: LoopRun["outcome"]): { marker: string; color: PaletteColor } {
@@ -110,7 +126,9 @@ function formatTimestamp(timestamp: string): string {
 
 function sameGuardrails(active: readonly string[] | undefined, pending: readonly string[]): boolean {
   if (!active || active.length !== pending.length) return false;
-  return active.every((guardrail, index) => guardrail === pending[index]);
+  const sortedActive = [...active].sort();
+  const sortedPending = [...pending].sort();
+  return sortedActive.every((guardrail, index) => guardrail === sortedPending[index]);
 }
 
 function runWord(count: number): string {
