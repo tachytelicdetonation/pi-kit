@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { HelmStore } from "../src/state/store.js";
-import { autoResolve, buildPrecedent, matchingPrecedent } from "../src/state/precedents.js";
+import { autoResolve, buildPrecedent, canonicalProposedPrecedents, matchingPrecedent } from "../src/state/precedents.js";
 import { MockDataSource, seedApiRenameEscalation, seedExportMapEscalation, seedState } from "../src/data/mock.js";
 import type { Precedent } from "../src/state/types.js";
 
@@ -43,6 +43,33 @@ test("DECLINED precedents are never auto-applied", () => {
   assert.equal(matchingPrecedent(esc.signature, [declined]), undefined, "a declined precedent does not match");
   const seen = autoResolve(esc, [declined]);
   assert.equal(seen.resolved, undefined, "a declined precedent does not auto-resolve");
+});
+
+test("canonical proposals never inherit lifecycle from a same-id record with a different signature", () => {
+  const durable: Precedent = {
+    id: "shared-id",
+    signature: "decision:durable",
+    question: "Durable question",
+    decision: "durable answer",
+    rationale: "persisted identity",
+    declined: true,
+  };
+  const mismatched: Precedent = {
+    ...durable,
+    signature: "decision:observed",
+    question: "Observed question",
+    decision: "observed answer",
+    declined: undefined,
+  };
+  const unrelated: Precedent = {
+    id: "unrelated",
+    signature: "decision:unrelated",
+    question: "Unrelated question",
+    decision: "unrelated answer",
+    rationale: "separate identity",
+  };
+
+  assert.deepEqual(canonicalProposedPrecedents([mismatched, unrelated], [durable]), [unrelated]);
 });
 
 // ── store integration (decide records; a second identical escalation auto-resolves) ──
@@ -94,4 +121,15 @@ test("MockDataSource.decide resolves and surfaces the precedent", async () => {
   await source.decide("e-export-map", 0);
   assert.equal(source.precedents().length, 1);
   assert.equal(source.getEscalation("e-export-map"), undefined, "removed from the queue");
+});
+
+test("MockDataSource refuses decline changes after a precedent is handed off", async () => {
+  const source = new MockDataSource();
+  source.getCloseout("g-esm");
+  await source.execute({ type: "goal.applyPrecedents", goalId: "g-esm" });
+
+  source.declinePrecedent("pc-export-map");
+  const precedent = source.precedents().find((item) => item.id === "pc-export-map");
+  assert.equal(precedent?.appliesTo, "handoff");
+  assert.equal(precedent?.declined, false);
 });

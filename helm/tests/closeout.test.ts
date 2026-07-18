@@ -15,6 +15,8 @@ function fakeTui(rows: number, columns: number): TuiLike {
   return { terminal: { rows, columns }, requestRender() {} };
 }
 
+const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 // ── render safety ─────────────────────────────────────────────────────────────
 for (const width of [120, 90, 70, 40, 12, 1]) {
   for (const height of [40, 20, 8, 3, 1, 0]) {
@@ -100,6 +102,45 @@ test("`a` asks for confirmation before applying precedents", () => {
   const lines = strip(app.render(120));
   assert.ok(lines.some((l) => l.includes("confirm apply these precedents")), "a confirmation appears");
   assert.match(lines[0], /goal complete/, "still on the closeout card");
+});
+
+test("successful apply hides handed-off rows and stale number keys cannot decline them", async () => {
+  const source = new MockDataSource();
+  const app = new HelmApp(fakeTui(30, 120), theme, () => {}, source, undefined, () => {});
+  intoCloseout(app);
+  assert.match(strip(app.render(120)).join("\n"), /export maps are platform-owned/);
+
+  app.handleInput("a");
+  app.handleInput("y");
+  await flush();
+
+  const rendered = strip(app.render(120)).join("\n");
+  assert.match(rendered, /precedents handed off for repository guidance/);
+  assert.doesNotMatch(rendered, /export maps are platform-owned/);
+  app.handleInput("1");
+  const handedOff = source.precedents().find((item) => item.id === "pc-export-map");
+  assert.equal(handedOff?.appliesTo, "handoff");
+  assert.equal(handedOff?.declined, false);
+});
+
+test("failed apply keeps the action available and reports the command failure", async () => {
+  class FailingApplySource extends MockDataSource {
+    override async execute(command: Parameters<MockDataSource["execute"]>[0]) {
+      if (command.type === "goal.applyPrecedents") return { ok: false, message: "handoff failed" };
+      return super.execute(command);
+    }
+  }
+
+  const app = new HelmApp(fakeTui(30, 120), theme, () => {}, new FailingApplySource());
+  intoCloseout(app);
+  app.handleInput("a");
+  app.handleInput("y");
+  await flush();
+
+  const rendered = strip(app.render(120)).join("\n");
+  assert.match(rendered, /a apply precedents/);
+  assert.match(rendered, /handoff failed/);
+  assert.doesNotMatch(rendered, /precedents handed off for repository guidance/);
 });
 
 test("`x` confirms, archives the goal, and ascends one hop", async () => {

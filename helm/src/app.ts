@@ -428,7 +428,8 @@ export class HelmApp implements Component {
     const currentById = new Map(current.map((precedent) => [precedent.id, precedent]));
     const durableById = new Map(this.dataSource.precedents().map((precedent) => [precedent.id, precedent]));
     return ids.flatMap((id) => {
-      const precedent = currentById.get(id) ?? durableById.get(id);
+      const durable = durableById.get(id);
+      const precedent = currentById.get(id) ?? (durable?.appliesTo ? undefined : durable);
       return precedent ? [precedent] : [];
     });
   }
@@ -1024,8 +1025,12 @@ export class HelmApp implements Component {
   /** 7d `a`: confirm, then hand the repository guidance edit to Pi. */
   private applyPrecedents(top: Screen & { id: "closeout" }): void {
     this.confirm("apply these precedents to repository guidance", () => {
-      this.applied.add(this.screenKey(top));
-      this.runCommand({ type: "goal.applyPrecedents", goalId: top.goalId });
+      this.runCommand({ type: "goal.applyPrecedents", goalId: top.goalId }, () => {
+        const key = this.screenKey(top);
+        this.applied.add(key);
+        this.closeoutPrecedentIds.delete(key);
+        this.declined.delete(key);
+      });
     });
   }
 

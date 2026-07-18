@@ -29,7 +29,9 @@ export function canonicalProposedPrecedents(
     const proposal = latestProposalById.get(id);
     const durable = storedById.get(id);
     const canonical = proposal && durable
-      ? { ...proposal, declined: durable.declined, appliesTo: durable.appliesTo }
+      ? proposal.signature === durable.signature
+        ? { ...proposal, declined: durable.declined, appliesTo: durable.appliesTo }
+        : durable
       : (proposal ?? durable)!;
     if (canonical.declined || canonical.appliesTo) continue;
     result.push(canonical);

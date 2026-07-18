@@ -300,7 +300,7 @@ export class RealDataSource implements DataSource {
   precedents(): Precedent[] {
     return this.store.getState().precedents.map((durable) => {
       const latest = this.observedPrecedents.get(durable.id);
-      return latest
+      return latest?.signature === durable.signature
         ? { ...latest, declined: durable.declined, appliesTo: durable.appliesTo }
         : durable;
     });
@@ -311,9 +311,11 @@ export class RealDataSource implements DataSource {
   }
 
   setPrecedentDeclined(id: string, declined: boolean): void {
-    const precedent = this.observedPrecedents.get(id)
-      ?? this.store.getState().precedents.find((item) => item.id === id);
-    if (!precedent) return;
+    const durable = this.store.getState().precedents.find((item) => item.id === id);
+    if (durable?.appliesTo) return;
+    const observed = this.observedPrecedents.get(id);
+    const precedent = observed && (!durable || observed.signature === durable.signature) ? observed : durable;
+    if (!precedent || precedent.appliesTo) return;
     if (!this.store.setPrecedentDeclined(precedent, declined)) return;
     this.appendAudit(
       declined ? "precedentDeclined" : "precedentAccepted",
@@ -614,9 +616,13 @@ export class RealDataSource implements DataSource {
           return { ok: true };
         case "goal.applyPrecedents": {
           const closeout = this.getCloseout(command.goalId);
-          const decisions = closeout?.proposedPrecedents.map((item) => `- ${item.question}: ${item.decision}`).join("\n") || "- No proposed precedents";
-          const ids = closeout?.proposedPrecedents.map((item) => item.id) ?? [];
-          for (const precedent of closeout?.proposedPrecedents ?? []) this.store.applyPrecedent(precedent);
+          const proposedPrecedents = closeout?.proposedPrecedents ?? [];
+          if (proposedPrecedents.length === 0) {
+            return { ok: false, message: "No proposed precedents are available to hand off." };
+          }
+          const decisions = proposedPrecedents.map((item) => `- ${item.question}: ${item.decision}`).join("\n");
+          const ids = proposedPrecedents.map((item) => item.id);
+          for (const precedent of proposedPrecedents) this.store.applyPrecedent(precedent);
           this.appendAudit("precedentApplied", [command.goalId, ...ids], "Handed approved precedents to the application workflow", decisions);
           this.persist();
           return { ok: true, agentPrompt: `Apply these approved Helm precedents to the most appropriate repository guidance (CLAUDE.md or a focused skill). Inspect existing guidance first, make the smallest coherent edit, run relevant validation, and commit it separately.\n\n${decisions}` };

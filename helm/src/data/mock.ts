@@ -581,7 +581,7 @@ export class MockDataSource implements DataSource {
   precedents(): Precedent[] {
     return this.store.getState().precedents.map((durable) => {
       const latest = this.observedPrecedents.get(durable.id);
-      return latest
+      return latest?.signature === durable.signature
         ? { ...latest, declined: durable.declined, appliesTo: durable.appliesTo }
         : durable;
     });
@@ -592,9 +592,11 @@ export class MockDataSource implements DataSource {
   }
 
   setPrecedentDeclined(id: string, declined: boolean): void {
-    const precedent = this.observedPrecedents.get(id)
-      ?? this.store.getState().precedents.find((item) => item.id === id);
-    if (!precedent) return;
+    const durable = this.store.getState().precedents.find((item) => item.id === id);
+    if (durable?.appliesTo) return;
+    const observed = this.observedPrecedents.get(id);
+    const precedent = observed && (!durable || observed.signature === durable.signature) ? observed : durable;
+    if (!precedent || precedent.appliesTo) return;
     this.store.setPrecedentDeclined(precedent, declined);
   }
 

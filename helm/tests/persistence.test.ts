@@ -6,7 +6,7 @@ import test from "node:test";
 import { RealDataSource } from "../src/data/real.js";
 import type { UsagePort, WorkflowPort } from "../src/data/ports.js";
 import { createHelmRepository } from "../src/state/persistence.js";
-import type { Escalation, HelmState, LoopDefinition } from "../src/state/types.js";
+import type { Closeout, Escalation, HelmState, LoopDefinition, Precedent } from "../src/state/types.js";
 
 function workflowPort(overrides: Partial<WorkflowPort> = {}): WorkflowPort {
   return {
@@ -61,6 +61,83 @@ function source(cwd: string, statePath: string, workflows = workflowPort()): Rea
     repository: createHelmRepository(cwd, statePath),
   });
 }
+
+function closeout(goalId: string, proposedPrecedents: Precedent[]): Closeout {
+  return {
+    goalId,
+    goalName: "completed goal",
+    startedText: "started",
+    landedText: "landed",
+    packagesDone: 1,
+    packagesTotal: 1,
+    unit: "package",
+    addedText: "+1",
+    removedText: "−0",
+    commitsText: "1 commit",
+    greenText: "100% green",
+    actualCost: "$1",
+    estCost: "$1",
+    yourTime: "1 min",
+    interventions: "none",
+    overrunWhy: "none",
+    proposedPrecedents,
+  };
+}
+
+test("real data source refuses decline changes after a precedent is handed off", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const statePath = join(cwd, ".state", "helm.json");
+  const precedent: Precedent = {
+    id: "handed-off",
+    signature: "decision:handed-off",
+    question: "Keep the durable rule?",
+    decision: "yes",
+    rationale: "already handed off",
+    declined: false,
+    appliesTo: "handoff",
+  };
+  try {
+    const repository = createHelmRepository(cwd, statePath);
+    repository.save({
+      ...repository.load(),
+      precedents: [precedent],
+      closeouts: [closeout("goal-complete", [precedent])],
+    });
+    const ds = source(cwd, statePath);
+    const auditCount = ds.snapshot().audit?.length ?? 0;
+
+    ds.declinePrecedent(precedent.id);
+    ds.setPrecedentDeclined(precedent.id, false);
+
+    assert.deepEqual(ds.precedents().find((item) => item.id === precedent.id), precedent);
+    assert.equal(ds.snapshot().audit?.length ?? 0, auditCount);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("applying an empty closeout is a no-op without audit or agent handoff", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const statePath = join(cwd, ".state", "helm.json");
+  try {
+    const repository = createHelmRepository(cwd, statePath);
+    repository.save({
+      ...repository.load(),
+      closeouts: [closeout("goal-empty", [])],
+    });
+    const ds = source(cwd, statePath);
+    const auditCount = ds.snapshot().audit?.length ?? 0;
+
+    const result = await ds.execute({ type: "goal.applyPrecedents", goalId: "goal-empty" });
+
+    assert.equal(result.ok, false);
+    assert.match(result.message ?? "", /no proposed precedents/i);
+    assert.equal(result.agentPrompt, undefined);
+    assert.equal(ds.snapshot().audit?.length ?? 0, auditCount);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
 
 test("goal intent and scheduled-loop definitions survive a fresh data-source instance", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
