@@ -27,6 +27,8 @@ export interface PermissionRequest {
   evidence?: string[];
   /** Optional worktree this blocks, so the card can offer `enter full session`. */
   worktreeId?: string;
+  /** Permission/approval choices default to the app's explicit y/n confirmation gate. */
+  requiresConfirm?: boolean;
 }
 
 /** Monotonic id source — a bridged prompt needs a unique id + signature. */
@@ -48,10 +50,15 @@ export function bridgePermissionRequest(ds: DataSource, request: PermissionReque
     blockedSinceMs: Date.now(),
     problem: request.question,
     evidence: request.evidence ?? [],
-    options: request.options.map((text, index) => ({ text, recommended: index === 0 })),
+    options: request.options.map((text, index) => ({
+      text,
+      recommended: index === 0,
+      requiresConfirm: request.requiresConfirm ?? true,
+    })),
     blockedMinutes: 0,
     idleNote: "",
     signature,
+    resolutionClass: "permission",
     precedentPhrase: request.question,
     worktreeId: request.worktreeId,
   };

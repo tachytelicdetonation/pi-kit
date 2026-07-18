@@ -131,7 +131,7 @@ test("digest full log and closeout report open read-only document screens", asyn
   assert.match(stripAnsi(closeout.render(120)[0]!), /goal report/);
 });
 
-test("escalation follow-up captures text and hands it to Pi without deciding", async () => {
+test("escalation follow-up persists on the active card without handing off out of Helm", async () => {
   let handoff = "";
   const source = new MockDataSource();
   const app = new HelmApp(tui(), theme, () => {}, source, undefined, (prompt) => { handoff = prompt; });
@@ -140,6 +140,7 @@ test("escalation follow-up captures text and hands it to Pi without deciding", a
   type(app, "what breaks if I choose option two");
   app.handleInput("\r");
   await flush();
-  assert.match(handoff, /what breaks if I choose option two/);
+  assert.equal(handoff, "", "follow-up stays in Helm instead of taking the exit handoff");
+  assert.equal(source.listEscalations()[0]?.followUps?.[0]?.question, "what breaks if I choose option two");
   assert.equal(source.listEscalations().length, 2, "asking does not resolve the decision");
 });

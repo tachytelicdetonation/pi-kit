@@ -19,8 +19,8 @@ function fakeTui(rows: number, columns: number): TuiLike {
 
 /** A MockDataSource whose trial always FAILS (for the failed-trial path). */
 class FailingTrialSource extends MockDataSource {
-  trialLoop(): Promise<{ ok: boolean }> {
-    return Promise.resolve({ ok: false });
+  trialLoop(): Promise<{ passed: boolean; evidence: string[]; ok: boolean }> {
+    return Promise.resolve({ passed: false, evidence: ["fixture failure"], ok: false });
   }
 }
 

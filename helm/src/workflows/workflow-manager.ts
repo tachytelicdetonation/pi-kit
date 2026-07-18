@@ -125,6 +125,11 @@ export class WorkflowManager extends EventEmitter {
   private defaultAgentTimeoutMs: number | null;
   private defaultAgentRetries: number;
   private persistAgentSessions: boolean;
+  private readonly pausedAgents = new Map<string, Set<number>>();
+  private readonly agentIdByCall = new Map<string, Map<number, number>>();
+  private readonly activeAgentAborts = new Map<string, Map<number, AbortController>>();
+  private readonly pauseInterrupts = new Set<string>();
+  private readonly agentResumeWaiters = new Map<string, Set<() => void>>();
 
   constructor(options: WorkflowManagerOptions = {}) {
     super();
@@ -400,8 +405,12 @@ export class WorkflowManager extends EventEmitter {
         },
         onAgentStart: (event) => {
           const at = Date.now();
+          const agentId = managed.snapshot.agents.length + 1;
+          const callMap = this.agentIdByCall.get(managed.runId) ?? new Map<number, number>();
+          callMap.set(event.callIndex, agentId);
+          this.agentIdByCall.set(managed.runId, callMap);
           managed.snapshot.agents.push({
-            id: managed.snapshot.agents.length + 1,
+            id: agentId,
             label: event.label,
             phase: event.phase,
             prompt: event.prompt,
@@ -415,6 +424,15 @@ export class WorkflowManager extends EventEmitter {
           this.emit("agentStart", { runId: managed.runId, ...event });
           progress();
         },
+        waitForAgentResume: (callIndex) => this.waitForAgentResume(managed.runId, callIndex, managed.controller.signal),
+        registerAgentAbort: (callIndex, controller) => {
+          const controls = this.activeAgentAborts.get(managed.runId) ?? new Map<number, AbortController>();
+          if (controller) controls.set(callIndex, controller);
+          else controls.delete(callIndex);
+          if (controls.size) this.activeAgentAborts.set(managed.runId, controls);
+          else this.activeAgentAborts.delete(managed.runId);
+        },
+        consumeAgentPauseInterrupt: (callIndex) => this.pauseInterrupts.delete(`${managed.runId}:${callIndex}`),
         onAgentEnd: (event) => {
           const agent = [...managed.snapshot.agents]
             .reverse()
@@ -588,6 +606,61 @@ export class WorkflowManager extends EventEmitter {
     this.persistRun(managed);
     this.releaseRunLease(managed);
     return true;
+  }
+
+  /** Pause one active agent call while leaving sibling agents and the run alive. */
+  pauseAgent(runId: string, agentId: number): boolean {
+    const managed = this.runs.get(runId);
+    if (managed?.status !== "running" || !managed.snapshot.agents.some((agent) => agent.id === agentId && agent.status === "running")) return false;
+    const paused = this.pausedAgents.get(runId) ?? new Set<number>();
+    if (paused.has(agentId)) return false;
+    paused.add(agentId);
+    this.pausedAgents.set(runId, paused);
+    const callIndex = [...(this.agentIdByCall.get(runId)?.entries() ?? [])].find(([, id]) => id === agentId)?.[0];
+    if (callIndex !== undefined) {
+      const controller = this.activeAgentAborts.get(runId)?.get(callIndex);
+      if (controller) {
+        this.pauseInterrupts.add(`${runId}:${callIndex}`);
+        controller.abort();
+      }
+    }
+    this.emit("agentPaused", { runId, agentId });
+    return true;
+  }
+
+  resumeAgent(runId: string, agentId: number): boolean {
+    const paused = this.pausedAgents.get(runId);
+    if (!paused?.delete(agentId)) return false;
+    if (!paused.size) this.pausedAgents.delete(runId);
+    const callIndex = [...(this.agentIdByCall.get(runId)?.entries() ?? [])].find(([, id]) => id === agentId)?.[0];
+    if (callIndex !== undefined) {
+      const key = `${runId}:${callIndex}`;
+      for (const resolve of this.agentResumeWaiters.get(key) ?? []) resolve();
+      this.agentResumeWaiters.delete(key);
+    }
+    this.emit("agentResumed", { runId, agentId });
+    return true;
+  }
+
+  isAgentPaused(runId: string, agentId: number): boolean {
+    return this.pausedAgents.get(runId)?.has(agentId) ?? false;
+  }
+
+  private waitForAgentResume(runId: string, callIndex: number, signal: AbortSignal): Promise<void> {
+    const agentId = this.agentIdByCall.get(runId)?.get(callIndex);
+    if (agentId === undefined || !this.isAgentPaused(runId, agentId)) return Promise.resolve();
+    const key = `${runId}:${callIndex}`;
+    return new Promise((resolve) => {
+      const waiters = this.agentResumeWaiters.get(key) ?? new Set<() => void>();
+      const done = () => {
+        waiters.delete(done);
+        signal.removeEventListener("abort", done);
+        resolve();
+      };
+      waiters.add(done);
+      this.agentResumeWaiters.set(key, waiters);
+      signal.addEventListener("abort", done, { once: true });
+    });
   }
 
   /**

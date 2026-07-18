@@ -158,7 +158,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   onCheckpointAuto?: (event: { prompt: string; reply: unknown }) => void;
   onLog?: (message: string) => void;
   onPhase?: (title: string) => void;
-  onAgentStart?: (event: { label: string; phase?: string; prompt: string; model?: string }) => void;
+  onAgentStart?: (event: { callIndex: number; label: string; phase?: string; prompt: string; model?: string }) => void;
   onAgentEnd?: (event: {
     label: string;
     phase?: string;
@@ -172,6 +172,10 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
     recoverable?: boolean;
   }) => void;
   onAgentHistory?: (event: { label: string; phase?: string; history: AgentHistoryEntry[] }) => void;
+  /** Manager-owned per-agent pause controls. They never pause sibling calls. */
+  waitForAgentResume?: (callIndex: number) => Promise<void>;
+  registerAgentAbort?: (callIndex: number, controller: AbortController | undefined) => void;
+  consumeAgentPauseInterrupt?: (callIndex: number) => boolean;
   onTokenUsage?: (usage: {
     input: number;
     output: number;
@@ -495,7 +499,7 @@ export async function runWorkflow<T = unknown>(
     const hashMatches = cached != null && cached.hash === callHash;
     const cachedEmptyOutput = hashMatches && isEmptyTextAgentResult(cached.result, agentOptions.schema);
     if (hashMatches && !cachedEmptyOutput && callIndex < state.firstMiss) {
-      options.onAgentStart?.({ label, phase: assignedPhase, prompt, model: displayModel });
+      options.onAgentStart?.({ callIndex, label, phase: assignedPhase, prompt, model: displayModel });
       options.onAgentEnd?.({ label, phase: assignedPhase, result: cached.result, tokens: 0, model: displayModel });
       // Apply this agent's write delta so live agents later in the run see a
       // consistent store. Additive apply preserves parallel-agent writes that
@@ -512,7 +516,7 @@ export async function runWorkflow<T = unknown>(
       const retryAttempts = normalizeAgentRetries(agentOptions.retries ?? options.agentRetries ?? 0);
       const maxAttempts = retryAttempts + 1;
 
-      options.onAgentStart?.({ label, phase: assignedPhase, prompt, model: displayModel });
+      options.onAgentStart?.({ callIndex, label, phase: assignedPhase, prompt, model: displayModel });
 
       // Optional per-agent worktree isolation (deterministic name -> stable resume keys).
       // Precedence: explicit call-site isolation > agentDef isolation.
@@ -549,11 +553,13 @@ export async function runWorkflow<T = unknown>(
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           usage = undefined;
           try {
+            await options.waitForAgentResume?.(callIndex);
             throwIfAborted();
 
             // Run each attempt with its own cancellation scope. A timeout aborts
             // and fully settles the underlying agent before a retry can start.
             const attemptSignal = createLinkedAbortController(options.signal);
+            options.registerAgentAbort?.(callIndex, attemptSignal);
             const result = await withTimeout(
               agentRunner.run(prompt, {
                 label,
@@ -591,7 +597,10 @@ export async function runWorkflow<T = unknown>(
               timeout,
               label,
               () => attemptSignal.abort(),
-            ).finally(attemptSignal.dispose);
+            ).finally(() => {
+              options.registerAgentAbort?.(callIndex, undefined);
+              attemptSignal.dispose();
+            });
 
             throwIfAborted();
             if (isEmptyTextAgentResult(result, agentOptions.schema)) {
@@ -620,6 +629,11 @@ export async function runWorkflow<T = unknown>(
             return result;
           } catch (error) {
             if (options.signal?.aborted) throw error;
+            if (options.consumeAgentPauseInterrupt?.(callIndex)) {
+              attempt -= 1;
+              await options.waitForAgentResume?.(callIndex);
+              continue;
+            }
 
             const workflowError = wrapError(error, { agentLabel: label });
             logger.error(`agent ${label} attempt ${attempt}/${maxAttempts} failed: ${workflowError.message}`);

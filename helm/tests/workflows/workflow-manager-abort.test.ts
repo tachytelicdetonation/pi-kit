@@ -386,6 +386,47 @@ test(
 );
 
 test(
+  "per-agent pause interrupts only the selected worktree while its sibling keeps running",
+  withTempCwd(async (cwd) => {
+    const calls = new Map<string, Array<{ resolve: (value: unknown) => void }>>();
+    const runner = {
+      run(prompt: string, options: { signal?: AbortSignal }) {
+        return new Promise<unknown>((resolve, reject) => {
+          const entries = calls.get(prompt) ?? [];
+          entries.push({ resolve });
+          calls.set(prompt, entries);
+          options.signal?.addEventListener("abort", () => reject(new Error("agent interrupted")), { once: true });
+        });
+      },
+    };
+    const manager = new WorkflowManager({ cwd, agent: runner });
+    manager.on("error", () => {});
+    const script = `export const meta = { name: 'agent_pause', description: 'isolated agent pause' }
+const [one, two] = await parallel([
+  () => agent('wt-1', { label: 'wt-1' }),
+  () => agent('wt-2', { label: 'wt-2' }),
+])
+return { one, two }`;
+    const { runId, promise } = manager.startInBackground(script, undefined, { concurrency: 2 });
+    await waitUntil(() => manager.getRun(runId)?.snapshot.agents.length === 2);
+
+    assert.equal(manager.pauseAgent(runId, 2), true);
+    assert.equal(manager.isAgentPaused(runId, 2), true);
+    assert.equal(manager.getRun(runId)?.status, "running", "the workflow lane remains live");
+    calls.get("wt-1")?.[0]?.resolve("wt-1 done");
+    await waitUntil(() => (manager.listRuns().find((run) => run.runId === runId)?.journal?.length ?? 0) === 1);
+    assert.equal(manager.getRun(runId)?.status, "running", "wt-1 completed while wt-2 stayed paused");
+
+    assert.equal(manager.resumeAgent(runId, 2), true);
+    await waitUntil(() => (calls.get("wt-2")?.length ?? 0) === 2);
+    calls.get("wt-2")?.[1]?.resolve("wt-2 done");
+    await promise;
+    assert.equal(manager.getRun(runId)?.status, "completed");
+    assert.deepEqual(manager.getRun(runId)?.result?.result, { one: "wt-1 done", two: "wt-2 done" });
+  }),
+);
+
+test(
   "resume with journal replay replays completed agents and runs remaining live",
   withTempCwd(async (cwd) => {
     // Use a multi-agent workflow: agent 1 completes before pause (gets journaled),

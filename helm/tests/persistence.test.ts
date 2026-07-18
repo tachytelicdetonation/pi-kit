@@ -6,22 +6,29 @@ import test from "node:test";
 import { RealDataSource } from "../src/data/real.js";
 import type { UsagePort, WorkflowPort } from "../src/data/ports.js";
 import { createHelmRepository } from "../src/state/persistence.js";
-import type { HelmState } from "../src/state/types.js";
+import type { Escalation, HelmState, LoopDefinition } from "../src/state/types.js";
 
-function workflowPort(): WorkflowPort {
+function workflowPort(overrides: Partial<WorkflowPort> = {}): WorkflowPort {
   return {
     listWorkflows: () => [],
     getDrillIn: () => undefined,
     getSession: () => undefined,
     pauseWorkflow: () => {},
     resumeWorkflow: () => Promise.resolve(true),
-    pauseAll: () => {},
+    pauseWorktree: () => true,
+    resumeWorktree: () => true,
+    isWorktreePaused: () => false,
+    pauseAll: () => [],
     resumeAll: () => {},
+    planGoal: async ({ prompt }) => ({ questions: prompt ? [] : [{ id: "outcome", question: "What outcome?" }], plan: [{ name: "execute", description: "implement and verify" }], estWall: "1-3h", estCost: "~$8-20", escalationRule: "ambiguous decisions escalate" }),
     startGoal: () => Promise.resolve(["run-1"]),
-    trialLoop: () => Promise.resolve({ ok: true, runId: "trial-1" }),
+    trialLoop: () => Promise.resolve({ passed: true, ok: true, evidence: ["fixture passed"], runId: "trial-1" }),
     runLoop: () => Promise.resolve({ ok: true, runId: "loop-1" }),
     getGoalProgress: () => undefined,
+    getGoalMetrics: () => undefined,
+    listUsageCostRecords: () => [],
     subscribe: () => () => {},
+    ...overrides,
   };
 }
 
@@ -29,6 +36,7 @@ function usagePort(): UsagePort {
   return {
     getFooter: () => ({ providers: [] }),
     getUsageDetail: () => ({ providers: [], spendToday: "—", spendWeek: "—", perGoal: [] }),
+    getAccountingSnapshot: () => ({ spentUsd: 0, providerRemaining: {}, records: [] }),
     subscribe: () => () => {},
   };
 }
@@ -40,12 +48,11 @@ function emptyState(cwd: string): HelmState {
   };
 }
 
-function source(cwd: string, statePath: string): RealDataSource {
+function source(cwd: string, statePath: string, workflows = workflowPort()): RealDataSource {
   return new RealDataSource({
-    workflows: workflowPort(),
+    workflows,
     usage: usagePort(),
     nativeState: emptyState(cwd),
-    trialLoop: () => Promise.resolve({ ok: true }),
     synthDigest: () => ({ spanText: "—", spentText: "—", shippedGoals: [], shippedByLoops: [], decisionsQueued: [], failedHandled: [], quotaDrain: [] }),
     synthIntake: () => { throw new Error("production never synthesizes seeded intake"); },
     synthLoopDraft: () => { throw new Error("production never synthesizes seeded loop drafts"); },
@@ -66,7 +73,7 @@ test("goal intent and scheduled-loop definitions survive a fresh data-source ins
 
     const loopDraft = await first.execute({ type: "loop.createDraft", prompt: "every 2 hours verify documentation links" });
     assert.ok(loopDraft.id);
-    assert.deepEqual(await first.trialLoop(loopDraft.id!), { ok: true });
+    assert.deepEqual(await first.trialLoop(loopDraft.id!), { passed: true, ok: true, evidence: ["fixture passed"], runId: "trial-1" });
     const scheduled = await first.execute({ type: "loop.schedule", loopId: loopDraft.id! });
     assert.equal(scheduled.ok, true);
 
@@ -91,6 +98,194 @@ test("a loop cannot be scheduled until its current definition passes trial", asy
     const result = await ds.execute({ type: "loop.schedule", loopId: draft.id! });
     assert.equal(result.ok, false);
     assert.match(result.message ?? "", /trial/i);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("scheduled firings use the immutable active definition while edits remain a pending draft", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const statePath = join(cwd, ".state", "helm.json");
+  const fired: LoopDefinition[] = [];
+  try {
+    const ds = source(cwd, statePath, workflowPort({
+      runLoop: async (definition) => {
+        fired.push(definition);
+        return { ok: true, runId: "scheduled-1" };
+      },
+    }));
+    const created = await ds.execute({ type: "loop.createDraft", prompt: "every 2 hours inspect CI with original guardrails" });
+    await ds.trialLoop(created.id!);
+    await ds.execute({ type: "loop.schedule", loopId: created.id! });
+    const activeBefore = structuredClone(ds.snapshot().loops.find((loop) => loop.id === created.id)!.activeDefinition!);
+
+    await ds.execute({ type: "loop.edit", loopId: created.id!, text: "every 2 hours inspect CI. Guardrails: read-only, $1 cap" });
+    const edited = ds.snapshot().loops.find((loop) => loop.id === created.id)!;
+    assert.deepEqual(edited.activeDefinition, activeBefore, "editing cannot mutate the live definition");
+    assert.deepEqual(edited.pendingDraft?.guardrails, ["read-only", "$1 cap"]);
+    assert.equal(edited.pendingDraft?.trialPassed, false);
+
+    await (ds as unknown as { fireLoop(id: string): Promise<void> }).fireLoop(created.id!);
+    assert.equal(fired.length, 1);
+    assert.deepEqual(fired[0], activeBefore, "the due firing reads only activeDefinition");
+    assert.ok(ds.search("completed").some((hit) => hit.kind === "audit" || hit.kind === "loopRun"));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("failed trial persists a machine verdict, reopens draft lifecycle, and never schedules", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const statePath = join(cwd, ".state", "helm.json");
+  try {
+    const ds = source(cwd, statePath, workflowPort({
+      trialLoop: async () => ({ passed: false, ok: false, evidence: ["guardrail violation"] }),
+    }));
+    const created = await ds.execute({ type: "loop.createDraft", prompt: "every hour inspect CI" });
+    const verdict = await ds.trialLoop(created.id!);
+    assert.deepEqual(verdict, { passed: false, ok: false, evidence: ["guardrail violation"] });
+    const draft = ds.getLoopDraft(created.id!)!;
+    assert.equal(draft.lifecycle, "draft");
+    assert.equal(draft.trialPassed, false);
+    assert.deepEqual(draft.lastTrialVerdict?.evidence, ["guardrail violation"]);
+    assert.equal((await ds.execute({ type: "loop.schedule", loopId: created.id! })).ok, false);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pause-all survives relaunch, resumes only checkpointed runs, and shifts only active loop deadlines", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const statePath = join(cwd, ".state", "helm.json");
+  const resumed: string[][] = [];
+  let scheduledRuns = 0;
+  try {
+    const first = source(cwd, statePath, workflowPort({ pauseAll: () => ["run-global"], runLoop: async () => { scheduledRuns += 1; return { ok: true }; } }));
+    const active = await first.execute({ type: "loop.createDraft", prompt: "every 2 hours active loop" });
+    await first.trialLoop(active.id!);
+    await first.execute({ type: "loop.schedule", loopId: active.id! });
+    const individuallyPaused = await first.execute({ type: "loop.createDraft", prompt: "every 3 hours individual loop" });
+    await first.trialLoop(individuallyPaused.id!);
+    await first.execute({ type: "loop.schedule", loopId: individuallyPaused.id! });
+    await first.execute({ type: "loop.togglePause", loopId: individuallyPaused.id! });
+    first.pauseAll();
+    const checkpoint = first.snapshot().pauseCheckpoint!;
+    assert.deepEqual(checkpoint.runIds, ["run-global"]);
+    assert.deepEqual(checkpoint.loops.map((item) => item.loopId), [active.id]);
+
+    const reloaded = source(cwd, statePath, workflowPort({
+      pauseAll: () => [],
+      resumeAll: (ids) => { resumed.push([...ids]); },
+      runLoop: async () => { scheduledRuns += 1; return { ok: true }; },
+    }));
+    assert.equal(reloaded.snapshot().pausedAll, true, "global pause is restored before timers rearm");
+    assert.equal(scheduledRuns, 0, "no loop fires during globally-paused relaunch");
+    reloaded.resumeAll();
+    assert.deepEqual(resumed, [["run-global"]], "individually paused lanes are not swept into resume-all");
+    assert.equal(reloaded.snapshot().loops.find((loop) => loop.id === individuallyPaused.id)?.health, "paused");
+    assert.ok(reloaded.snapshot().loops.find((loop) => loop.id === active.id)!.nextRunAtMs! > Date.now());
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+function escalation(id: string, overrides: Partial<Escalation> = {}): Escalation {
+  return {
+    id,
+    source: { kind: "workflow", label: "pkg/api" },
+    question: "Which export-map shape should be used?",
+    verb: "decide",
+    blockedSinceMs: Date.now(),
+    problem: "Two valid export-map shapes conflict.",
+    evidence: ["current vs proposed"],
+    options: [{ text: "keep conditional exports", recommended: true }, { text: "use a flat map" }],
+    blockedMinutes: 0,
+    idleNote: "one lane idle",
+    signature: "legacy:export-map",
+    conflictKind: "export map conflict",
+    scope: "packages/pkg-api",
+    ...overrides,
+  };
+}
+
+test("decision signatures auto-resolve stably, declined precedents persist, and permission prompts never auto-resolve", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const statePath = join(cwd, ".state", "helm.json");
+  try {
+    const first = source(cwd, statePath);
+    first.addEscalation(escalation("decision-1"));
+    await first.decide("decision-1", 0);
+    const precedent = first.precedents().find((item) => item.decision === "keep conditional exports")!;
+    first.addEscalation(escalation("decision-2", { source: { kind: "workflow", label: "renamed lane" } }));
+    assert.equal(first.getEscalation("decision-2"), undefined, "explicit scope keeps the signature stable across labels");
+    assert.ok(first.search("auto-resolved").some((hit) => hit.screen?.id === "viewer"));
+
+    first.declinePrecedent(precedent.id);
+    const reloaded = source(cwd, statePath);
+    assert.equal(reloaded.precedents().find((item) => item.id === precedent.id)?.declined, true);
+    reloaded.addEscalation(escalation("decision-3"));
+    assert.ok(reloaded.getEscalation("decision-3"), "declined precedent is never applied after relaunch");
+
+    const permission = escalation("permission-1", { resolutionClass: "permission", signature: "permission:same", conflictKind: undefined, scope: undefined });
+    reloaded.addEscalation(permission);
+    await reloaded.decide(permission.id, 0);
+    reloaded.addEscalation({ ...permission, id: "permission-2" });
+    assert.ok(reloaded.getEscalation("permission-2"), "permission-class ingress never auto-resolves");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("follow-up questions and answers persist while the escalation stays active", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const statePath = join(cwd, ".state", "helm.json");
+  try {
+    const ds = source(cwd, statePath);
+    ds.addEscalation(escalation("follow-up", { conflictKind: undefined, scope: undefined }));
+    void ds.execute({ type: "escalation.ask", escalationId: "follow-up", text: "What breaks on Node 20?" });
+    const at = ds.getEscalation("follow-up")!.followUps![0]!.at;
+    ds.answerEscalationFollowUp("follow-up", at, "The legacy condition order changes resolution.");
+    const reloaded = source(cwd, statePath);
+    assert.equal(reloaded.getEscalation("follow-up")?.followUps?.[0]?.answer, "The legacy condition order changes resolution.");
+    assert.equal(reloaded.getEscalation("follow-up")?.resolved, undefined);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("intake planning happens before spawn and re-plans until all structured questions are answered", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const statePath = join(cwd, ".state", "helm.json");
+  let plans = 0;
+  let starts = 0;
+  try {
+    const ds = source(cwd, statePath, workflowPort({
+      planGoal: async ({ answers }) => {
+        plans += 1;
+        const answer = answers.find((item) => item.id === "choice")?.answer;
+        return {
+          questions: [{ id: "choice", question: "Which package is authoritative?", answer }],
+          plan: [{ name: "migration", description: answer ? `migrate ${answer}` : "migrate the selected package" }],
+          estWall: answer ? "2h wall" : "3-5h wall",
+          estCost: answer ? "~$12" : "~$20",
+          escalationRule: "permissions escalate",
+        };
+      },
+      startGoal: async () => { starts += 1; return ["goal-run"]; },
+    }));
+    const created = await ds.execute({ type: "goal.createDraft", prompt: "migrate the ambiguous package" });
+    assert.equal(plans, 1);
+    assert.equal(starts, 0, "planning cannot spawn workflow work");
+    assert.equal(ds.getIntake(created.id!)?.openQuestions, true);
+    assert.equal((await ds.execute({ type: "goal.spawn", draftId: created.id! })).ok, false);
+    assert.equal(starts, 0);
+    await ds.execute({ type: "goal.answer", draftId: created.id!, text: "pkg/api" });
+    assert.equal(plans, 2);
+    assert.equal(ds.getIntake(created.id!)?.openQuestions, false);
+    assert.equal(ds.getIntake(created.id!)?.estCost, "~$12");
+    assert.equal((await ds.execute({ type: "goal.spawn", draftId: created.id! })).ok, true);
+    assert.equal(starts, 1);
+    assert.ok(ds.search("started goal").some((hit) => hit.kind === "audit"));
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

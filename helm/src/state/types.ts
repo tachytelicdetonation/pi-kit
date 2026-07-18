@@ -21,6 +21,11 @@ export interface Goal {
   progress: number;
   /** Pre-rendered ETA hint, e.g. "~6h left". Optional (unknown for drafts). */
   etaText?: string;
+  /** Durable lifecycle timestamps used by measured closeout receipts. */
+  startedAtMs?: number;
+  completedAtMs?: number;
+  /** Original intake estimate, preserved verbatim for the closeout comparison. */
+  estCost?: string;
 }
 
 /**
@@ -58,6 +63,16 @@ export interface Loop {
   /** Durable scheduler cadence and next deadline (never read directly by renderers). */
   scheduleEveryMs?: number;
   nextRunAtMs?: number;
+  /** Explicit persisted lifecycle; rows in HelmState.loops are always scheduled. */
+  lifecycle?: "scheduled";
+  /** Scheduled lifecycle substate. `health` is the renderer-compatible projection. */
+  scheduledState?: "healthy" | "idle" | "paused";
+  /** Definition used by every scheduled firing until an accepted trial promotes a replacement. */
+  activeDefinition?: LoopDefinition;
+  /** Edited definition awaiting a passed trial and explicit acceptance. */
+  pendingDraft?: LoopDraft;
+  /** Durable timestamp used to detect a missed interval and assign idle. */
+  lastFiredAtMs?: number;
 }
 
 /** One numbered option on a 7b escalation card. Exactly one is `recommended`. */
@@ -66,6 +81,8 @@ export interface EscalationOption {
   requiresConfirm?: boolean;
   /** pi's recommended option — highlighted GREEN on the card. At most one true. */
   recommended?: boolean;
+  /** Destructive/permission choices must pass through the app's y/n gate. */
+  requiresConfirm?: boolean;
 }
 
 /**
@@ -109,6 +126,15 @@ export interface Escalation {
   precedentNote?: string;
   /** True once auto-resolved by precedent (kept out of the blocking queue). */
   resolved?: boolean;
+  /** Owning goal when known, so resolved decisions can feed its closeout. */
+  goalId?: string;
+  /** Follow-up questions keep the card active and are persisted with it. */
+  followUps?: { question: string; answer?: string; at: number }[];
+  /** Only decision-class escalations may use precedents. */
+  resolutionClass?: "decision" | "permission" | "approval";
+  /** Stable decision-signature inputs. */
+  conflictKind?: string;
+  scope?: string;
 }
 
 /**
@@ -243,6 +269,8 @@ export interface Precedent {
   declined?: boolean;
   /** Where the precedent was proposed to live, if applied (7d). */
   appliesTo?: "claudeMd" | "skill";
+  /** Goal whose escalation produced this decision, when attributable. */
+  goalId?: string;
 }
 
 /** A single provider's overnight quota drain for the 7c digest footer. */
@@ -275,9 +303,41 @@ export interface DigestData {
  */
 export interface JournalEvent {
   id: string;
-  kind: "merged" | "prOpened" | "escalated" | "selfCaughtRevert";
+  kind: JournalEventKind;
   timestampMs: number;
   label: string;
+}
+
+/**
+ * Journal vocabulary. Only the first four user-visible receipt kinds feed digest
+ * lines; goal/loop lifecycle events remain auditable without fabricating PRs.
+ */
+export type JournalEventKind =
+  | "merged"
+  | "prOpened"
+  | "escalated"
+  | "selfCaughtRevert"
+  | "selfCaughtPaused"
+  | "goalStarted"
+  | "loopRunCompleted";
+
+/** Durable append-only record for autonomous boundaries controlled by Helm. */
+export interface AuditRecord {
+  id: string;
+  kind:
+    | "goalStarted"
+    | "runCompleted"
+    | "pause"
+    | "resume"
+    | "autoResolve"
+    | "precedentApplied"
+    | "precedentDeclined"
+    | "loopPromoted"
+    | "selfCaughtPause";
+  targetIds: string[];
+  at: number;
+  summary: string;
+  detail: string;
 }
 
 /**
@@ -306,6 +366,8 @@ export interface IntakeDraft {
   preamble: string;
   /** The un-inferable questions, rendered NUMBERED. */
   questions: string[];
+  /** Structured form retained across re-planning; `questions` is its renderer projection. */
+  questionDetails?: IntakeQuestion[];
   /** The operator's answer line (a `❯` echo), once they have replied. Optional. */
   userReply?: string;
   /** The PLAN block: one line per workflow. */
@@ -318,6 +380,12 @@ export interface IntakeDraft {
   escalationRule: string;
   /** True while pi still has open questions — `g go` renders dim/disabled. */
   openQuestions: boolean;
+}
+
+export interface IntakeQuestion {
+  id: string;
+  question: string;
+  answer?: string;
 }
 
 /** One guardrail with a per-step model note, rendered with a purple model tag. */
@@ -354,6 +422,21 @@ export interface LoopDraft {
   trialStatement: string;
   /** Durable proof that the current draft definition passed its supervised trial. */
   trialPassed?: boolean;
+  /** Explicit persisted builder lifecycle. */
+  lifecycle?: "draft" | "trial" | "scheduled";
+  /** Machine-readable last trial receipt; failures reopen lifecycle=draft. */
+  lastTrialVerdict?: TrialVerdict;
+}
+
+/** Immutable executable subset promoted to a scheduled loop. */
+export type LoopDefinition = Omit<LoopDraft, "trialPassed" | "lifecycle" | "lastTrialVerdict">;
+
+export interface TrialVerdict {
+  passed: boolean;
+  evidence: string[];
+  runId?: string;
+  /** Compatibility projection for pre-contract callers. */
+  ok?: boolean;
 }
 
 /** The 7a trial gate view state, seeded from the draft's durable trial result. */
@@ -463,9 +546,20 @@ export interface HelmState {
   escalations: Escalation[];
   precedents: Precedent[];
   journal: JournalEvent[];
+  /** Resolved and auto-resolved escalations are retained forever for audit/search. */
+  decisions?: Escalation[];
+  /** Append-only autonomous-action corpus. */
+  audit?: AuditRecord[];
   /** True while ctrl+p pause-all is engaged (footer turns yellow). */
   pausedAll: boolean;
+  pauseCheckpoint?: PauseAllCheckpoint;
   footer: HelmFooterModel;
   /** The main session model; workflows tag themselves only when they differ from it. */
   mainModel: string;
+}
+
+export interface PauseAllCheckpoint {
+  runIds: string[];
+  loops: { loopId: string; remainingDelayMs: number }[];
+  pausedAt: number;
 }
