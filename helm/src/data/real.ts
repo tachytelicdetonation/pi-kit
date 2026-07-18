@@ -280,16 +280,28 @@ export class RealDataSource implements DataSource {
   listLoopRuns(loopId: string): LoopRun[] {
     if (!loopId) return [];
     return (this.store.getState().audit ?? [])
-      .filter((record) => record.kind === "runCompleted" && record.targetIds.includes(loopId))
-      .map((record) => ({
-        id: record.targetIds.find((targetId) => targetId !== loopId) ?? record.id,
-        loopId,
-        timestamp: new Date(record.at).toISOString(),
-        outcome: "success" as const,
-        summary: record.summary,
-        yieldNote: record.detail,
-      }))
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      .flatMap((record, index) => {
+        if (!record || !Array.isArray(record.targetIds) || record.targetIds.length === 0) return [];
+        if (record.targetIds[0] !== loopId) return [];
+        if (record.kind !== "runCompleted" && record.kind !== "selfCaughtPause") return [];
+        if (typeof record.at !== "number" || !Number.isFinite(record.at)) return [];
+        const at = new Date(record.at);
+        if (!Number.isFinite(at.getTime())) return [];
+        return [{
+          index,
+          at: at.getTime(),
+          run: {
+            id: record.targetIds[1] ?? record.id,
+            loopId,
+            timestamp: at.toISOString(),
+            outcome: record.kind === "runCompleted" ? "success" as const : "failure" as const,
+            summary: record.summary,
+            yieldNote: record.detail,
+          },
+        }];
+      })
+      .sort((a, b) => b.at - a.at || b.index - a.index)
+      .map(({ run }) => run);
   }
 
   getSession(worktreeId: string): Session | undefined {
@@ -397,8 +409,15 @@ export class RealDataSource implements DataSource {
     if (!loopId) return undefined;
     const stored = this.loopDrafts.get(loopId);
     if (stored) return stored;
-    if (this.deps.repository) return undefined;
     const loop = this.store.getState().loops.find((item) => item.id === loopId);
+    if (this.deps.repository) {
+      if (!loop?.activeDefinition) return undefined;
+      return {
+        ...structuredClone(loop.activeDefinition),
+        lifecycle: "scheduled",
+        trialPassed: true,
+      };
+    }
     return this.deps.synthLoopDraft(loopId, loop?.name);
   }
 

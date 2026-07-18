@@ -838,7 +838,9 @@ export class HelmApp implements Component {
       return;
     }
     if (top.id === "loopDrillin") {
-      this.push({ id: "loopBuilder", loopId: top.loopId });
+      if (this.dataSource.getLoopDraft(top.loopId)) {
+        this.push({ id: "loopBuilder", loopId: top.loopId });
+      }
       return;
     }
     if (top.id === "escalation") {
