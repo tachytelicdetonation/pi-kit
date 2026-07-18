@@ -160,3 +160,51 @@ Qualifies by risk: user-facing TUI surface, interaction usability is a first-cla
 
 ## Next action
 When both context threads return: sol drafts conformance-verification plan (gap list) → Fable gate-2 review in-session → user confirmation.
+
+---
+
+# Run 2: loop drill-in screen
+
+## State: SHIPPED — gate-4 verdict SHIP, merging to main
+Cycle 2 (9088deb, merged c175a7a): fallback draft memoized into loopDrafts (builder actions functional); selected-run row outranks section header at degenerate heights; F5/F4 regression tests strengthened to drive edit/trial/schedule/discard and assert selection visibility at 5-row body. Final verification on integrate: tsc clean, arbiter 85/85, full 1881 pass / 0 fail / 1 skip. Fix cycles: 2 of 2 consumed. Deviations (accepted, logged): implementer-authored regression tests outside arbiter suite (arbiter untouched, spot-checked); orchestrator-applied type-only fix to arbiter test (TS4104, no assertion touched, re-adjudicated); cycle-2 diff verified by strengthened behavioral tests + orchestrator inspection of both hunks, no third sol review pass (budget). Adjudicated test SHA: 36805d5 (cherry-picked as c28a872).
+
+## Prior state: FIX_CYCLE(2) — F5 regression + F4 residual fixed
+Cycle 1 (b060293, merged to integrate 6137894): verification green (tsc, 85/85 arbiter, full 1881/0/1). Delta re-review (out-drillin-rereview.md): F1/F2/F3/F6/F7/F8 CLOSED; F4 NARROWED (tiny-height windowing can hide selected run while keeping header — minor); F5 REGRESSED (major: fallback draft not materialized into loopDrafts map → builder trial/edit/schedule fail "draft not found", discard no-ops); plus two weak regression tests (F5 test asserts appearance not behavior; F4 test never asserts selection visibility). Cycle 2 checklist lane-drillin-fix2.txt → out-drillin-fix2.md. After this cycle: no further fixes permitted this run — residuals escalate.
+
+## Prior state: FIX_CYCLE(1) — 8 review findings fixed (sol HIGH, wt-fix)
+Adversarial review (out-drillin-review.md) findings, adjudicated: F2 failed-firings invisible (selfCaughtPause not projected) CONFIRMED major; F5 dead-end blank builder in persisted mode CONFIRMED major; F4 guardrails scroll out of viewport CONFIRMED major; F1 goal/cross-loop runCompleted attribution = collision-class hardening (match targetIds[0] only); F3 legacy-record validation PLAUSIBLE minor; F6 pending-trial label ignores trialPassed / F7 positional guardrail equality / F8 equal-timestamp order CONFIRMED minor. All 8 in fix checklist lane-drillin-fix1.txt → out-drillin-fix1.md; implementer-authored regression tests outside conformance-v2 accepted as deviation (same as run 1, spot-check required). Review also confirmed 16/18 arbiter tests pass in its sandbox (2 blocked by sandbox tempdir = ENVIRONMENT).
+
+## Prior state: GATE4_AUDIT — adversarial review on integrated diff
+Progress: impl DONE (fable/fix aba1089, all 6 items, tsc+67/67+full green), tests DONE (fable/tests 36805d5, 18 tests, all 16 matrix rows + 2 in-contract extras; adjudicated — spot-checks N1-N3/D2/D3/K1-K4/R3/R4 behavioral+sentinel-based, non-tautological). Integrated on fable/integrate: aba1089 + cherry-pick c28a872 (adjudicated test SHA 36805d5; one TEST_DEFECT fixed by orchestrator: type-only TS4104 structuredClone-readonly at line 84, no assertion touched, re-adjudicated trivially). Verification on integrate: tsc clean, conformance-v2 85/85, full suite 1874 pass / 0 fail / 1 skip. Zero product defects; fix-attempt counters unused. Adversarial review (sol HIGH, read-only): lane-drillin-review.txt → out-drillin-review.md.
+Fresh run, fresh counters (run 1's 2 gate-4 fix cycles do not carry over).
+
+## Verbatim request
+"3. Descoped earlier with your confirmation: loop drill-in screen, background fill #17181c. does this follow our design guidleins from the folder" → audit found both required by docs → recommendation: implement drill-in, accept terminal-native background as adaptation → user: "yes build using same method we bild previous stuff"
+
+## Scope
+- Implement the loop drill-in screen: reuses 6c workflow drill-in layout with run history + guardrails (Usage Bar Explorations.dc.html:21); navigation home loop row → drill-in → 7a builder (README.md:82).
+- Decision recorded: background stays terminal-native; #17181c token NOT painted (TUI adaptation, user-approved via "yes build" on that recommendation).
+
+## Starting commit
+656a799 (main, pushed). Worktrees fable/fix + fable/integrate fast-forwarded to it.
+
+## Threads
+- Context (sol LOW, read-only): DONE → scratchpad/out-drillin-context.md. Key facts: routing + guardrails data exist (getLoopDraft, Loop.activeDefinition/pendingDraft); NO per-loop run-history surface exists (contract gap); home loop row currently pushes loopBuilder directly (app.ts ~793-808); 6c template at screens/drill-in.ts.
+- Implementation (sol HIGH, wt-fix, workspace-write): lane-drillin-impl.txt → out-drillin-impl.md (running)
+- Tests (sol HIGH, wt-tests, own worktree, src/** forbidden): lane-drillin-tests.txt → out-drillin-tests.md (running); single new file helm/tests/conformance-v2/loop-drillin.test.ts
+
+## Contract v1 (frozen): scratchpad/contract-run2-v1.md
+LoopRun type; required DataSource.listLoopRuns(loopId) newest-first (real = durable-events-only, never fabricated, [] when none); Screen "loopDrillin"; home→drillin→builder; exact strings "no runs yet" / "pending trial".
+
+## Interpretation deltas (docs silent, resolved by Fable in-session, logged)
+1. "run history" = derived from real recorded journal/audit events only; empty state when none — never synthesized (data-truthfulness rule from run 1).
+2. Enter inside drill-in always descends to 7a builder (docs specify no per-run descent).
+3. `p` in drill-in = loop.togglePause (consistent with home + 6c).
+
+## Test matrix: N1-N4 navigation, R1-R5 rendering, D1-D3 data truthfulness, K1-K4 keys (full text in lane-drillin-tests.txt)
+
+## Attempt counters
+- Per-defect: none. Gate-4 fix cycles: 0 of 2.
+
+## Next action
+Both lanes return → adjudicate test manifest (spot-check highest-blast-radius: N1/N2, D2/D3, K3/K4) → integrate on wt-integrate (impl commit + squashed test commit) → run suite, classify failures → audit → merge/push.
