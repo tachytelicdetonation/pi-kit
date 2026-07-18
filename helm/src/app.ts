@@ -343,7 +343,7 @@ export class HelmApp implements Component {
       case "drillin": {
         const detail = this.dataSource.getDrillIn(top.workflowId);
         if (!detail) return [];
-        return renderDrillIn(detail, this.theme, width, height, this.getSelection(top));
+        return renderDrillIn({ ...detail, sessionModel: state.footer.model }, this.theme, width, height, this.getSelection(top));
       }
       case "session": {
         const session = this.dataSource.getSession(top.worktreeId);
@@ -360,12 +360,12 @@ export class HelmApp implements Component {
       case "intake": {
         const draft = this.dataSource.getIntake(top.draftId);
         if (!draft) return [];
-        return renderIntake(draft, this.theme, width, height);
+        return renderIntake({ ...draft, sessionModel: state.footer.model }, this.theme, width, height);
       }
       case "loopBuilder": {
         const draft = this.dataSource.getLoopDraft(top.loopId);
         if (!draft) return [];
-        return renderLoopBuilder(draft, this.theme, width, height, this.trialState(top));
+        return renderLoopBuilder({ ...draft, sessionModel: state.footer.model }, this.theme, width, height, this.trialState(top));
       }
       case "closeout": {
         const closeout = this.dataSource.getCloseout(top.goalId);

@@ -44,7 +44,7 @@ printable focuses the prompt and types to pi):
 - `ctrl+p` — **pause all** (freeze every lane mid-step; again resumes). The footer
   turns yellow with a `⏸ paused` indicator while paused.
 - `?` — a brief per-screen key-help hint on the prompt line
-- `q` — quit
+- `ctrl+q` — quit (`q` types to the prompt like any other printable)
 
 **Per-screen:** 6b `enter p n N` (`n` new goal → 6a, `N` new loop → 7a) · 6c `enter p r t` ·
 4a `d m i o` · 6a `g` go / `e` edit plan / `x` discard · 7a `t` trial, then `s`/`r`/`x` ·
