@@ -24,6 +24,11 @@ const PKG_COL = 10;
 /** Left gutter (2 cells): a selection marker or blank, keeping rows aligned. */
 const GUTTER = 2;
 
+/** Screen-local model context; shared state remains unchanged. */
+export interface DrillInRenderModel extends WorkflowDetail {
+  sessionModel?: string;
+}
+
 /** Header right-side counts for the app chrome: `N lanes × N worktrees · N agents`. */
 export function renderDrillInCounts(theme: ThemeLike, detail: WorkflowDetail): string {
   const text = `${detail.lanes} lanes × ${detail.worktrees.length} worktrees · ${detail.agents} agents`;
@@ -55,7 +60,7 @@ function testStateStatus(state: "green" | "wobbling" | "red"): { glyph: string; 
 }
 
 export function renderDrillIn(
-  detail: WorkflowDetail,
+  detail: DrillInRenderModel,
   theme: ThemeLike,
   width: number,
   height: number,
@@ -83,7 +88,7 @@ export function renderDrillIn(
   let anchor = 0;
   detail.worktrees.forEach((worktree, index) => {
     if (index === selection) anchor = lines.length;
-    lines.push(worktreeRow(theme, worktree, index === selection, w));
+    lines.push(worktreeRow(theme, worktree, detail.sessionModel, index === selection, w));
   });
   lines.push("");
 
@@ -123,11 +128,19 @@ function burnDownRow(theme: ThemeLike, detail: WorkflowDetail, width: number): s
 }
 
 /** `wt-N | package | fix→review→apply chips | …spring… applied · test-state`. */
-function worktreeRow(theme: ThemeLike, worktree: Worktree, isSelected: boolean, width: number): string {
+function worktreeRow(
+  theme: ThemeLike,
+  worktree: Worktree,
+  sessionModel: string | undefined,
+  isSelected: boolean,
+  width: number,
+): string {
   const name = paint(theme, PALETTE.primary, column(worktree.name, WT_COL));
   const pkg = paint(theme, PALETTE.mid, column(worktree.package, PKG_COL));
   const chips = renderChips(theme, worktree);
-  const tag = worktree.modelTag ? ` ${paint(theme, PALETTE.dim, "·")} ${paint(theme, PALETTE.purple, worktree.modelTag)}` : "";
+  const tag = worktree.modelTag && worktree.modelTag !== sessionModel
+    ? ` ${paint(theme, PALETTE.dim, "·")} ${paint(theme, PALETTE.purple, worktree.modelTag)}`
+    : "";
   const left = `${name}  ${pkg}  ${chips}${tag}`;
 
   const status = testStateStatus(worktree.testState);

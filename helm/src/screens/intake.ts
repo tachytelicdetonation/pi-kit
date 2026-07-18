@@ -15,7 +15,7 @@
  * visible).
  */
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { column, spring, windowLines, wrapPlain } from "./../chrome.js";
+import { actionGroup, column, spring, windowLines, wrapPlain } from "./../chrome.js";
 import { GLYPH, paint, PALETTE, type ThemeLike } from "./../theme.js";
 import type { IntakeDraft } from "./../state/types.js";
 
@@ -24,7 +24,12 @@ const INDENT = "  ";
 /** Name column for the plan workflow rows. */
 const PLAN_COL = 16;
 
-export function renderIntake(draft: IntakeDraft, theme: ThemeLike, width: number, height: number): string[] {
+/** Screen-local model context; shared state remains unchanged. */
+export interface IntakeRenderModel extends IntakeDraft {
+  sessionModel?: string;
+}
+
+export function renderIntake(draft: IntakeRenderModel, theme: ThemeLike, width: number, height: number): string[] {
   const w = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
   const h = Number.isFinite(height) ? Math.max(0, Math.floor(height)) : 0;
   if (w <= 0 || h <= 0) return [];
@@ -63,7 +68,7 @@ export function renderIntake(draft: IntakeDraft, theme: ThemeLike, width: number
     `${paint(theme, PALETTE.label, "plan")} ${paint(theme, PALETTE.dim, `· ${draft.planWorkflows.length} workflows`)}`;
   lines.push(clip(planHead, w));
   for (const workflow of draft.planWorkflows) {
-    lines.push(planRow(theme, workflow.name, workflow.description, workflow.modelTag, w));
+    lines.push(planRow(theme, workflow.name, workflow.description, workflow.modelTag, draft.sessionModel, w));
   }
   lines.push("");
 
@@ -82,8 +87,17 @@ function promptEcho(theme: ThemeLike, text: string, width: number): string {
 /** `  <name>  <description>  · <purple model>` — a single plan-workflow line.
  * The purple model tag is budgeted first so it survives narrow widths (only the
  * description is truncated), per the spec's "purple model tag if non-default". */
-function planRow(theme: ThemeLike, name: string, description: string, modelTag: string | undefined, width: number): string {
-  const tag = modelTag ? ` ${paint(theme, PALETTE.dim, "·")} ${paint(theme, PALETTE.purple, modelTag)}` : "";
+function planRow(
+  theme: ThemeLike,
+  name: string,
+  description: string,
+  modelTag: string | undefined,
+  sessionModel: string | undefined,
+  width: number,
+): string {
+  const tag = modelTag && modelTag !== sessionModel
+    ? ` ${paint(theme, PALETTE.dim, "·")} ${paint(theme, PALETTE.purple, modelTag)}`
+    : "";
   const head = `  ${paint(theme, PALETTE.bright, column(name, PLAN_COL))}${paint(theme, PALETTE.mid, description)}`;
   return `${truncateToWidth(head, Math.max(0, width - visibleWidth(tag)), "…")}${tag}`;
 }
@@ -101,9 +115,15 @@ function actionLine(theme: ThemeLike, draft: IntakeDraft, width: number): string
   const goKey = draft.openQuestions
     ? `${paint(theme, PALETTE.faint, "g")} ${paint(theme, PALETTE.faint, "go")}`
     : `${paint(theme, PALETTE.brand, "g")} ${paint(theme, PALETTE.dim, "go")}`;
-  const right =
-    `${goKey}${dot}${paint(theme, PALETTE.brand, "e")} ${paint(theme, PALETTE.dim, "edit plan")}` +
-    `${dot}${paint(theme, PALETTE.brand, "x")} ${paint(theme, PALETTE.dim, "discard")}`;
+  const right = actionGroup(
+    theme,
+    [
+      goKey,
+      `${paint(theme, PALETTE.brand, "e")} ${paint(theme, PALETTE.dim, "edit plan")}`,
+      `${paint(theme, PALETTE.brand, "x")} ${paint(theme, PALETTE.dim, "discard")}`,
+    ],
+    Math.max(0, width - INDENT.length),
+  );
   return truncateToWidth(`${INDENT}${spring(theme, left, right, Math.max(0, width - INDENT.length))}`, width, "");
 }
 

@@ -13,8 +13,8 @@
  * line; the app chrome supplies the header (span · $ spent) and the fleet footer.
  * Every line is ANSI-safe and clipped to at most `height` via windowLines.
  */
-import { truncateToWidth } from "@earendil-works/pi-tui";
-import { spring, windowLines, wrapPlain } from "./../chrome.js";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { actionGroup, spring, windowLines, wrapPlain } from "./../chrome.js";
 import { paint, PALETTE, type PaletteColor, type ThemeLike } from "./../theme.js";
 import type { DigestData, QuotaDrain } from "./../state/types.js";
 
@@ -84,10 +84,6 @@ function pushRows(
  * overnight: codex −N% · claude −N% · kimi untouched`.
  */
 function footerLine(theme: ThemeLike, drain: QuotaDrain[], width: number): string {
-  const left =
-    `${paint(theme, PALETTE.brand, "d")} ${paint(theme, PALETTE.dim, "decisions first")}` +
-    ` ${paint(theme, PALETTE.dim, "·")} ${paint(theme, PALETTE.brand, "enter")} ${paint(theme, PALETTE.dim, "mission control")}` +
-    ` ${paint(theme, PALETTE.dim, "·")} ${paint(theme, PALETTE.brand, "l")} ${paint(theme, PALETTE.dim, "full log")}`;
   const parts = drain.map((entry) => {
     const value =
       entry.deltaPercent === 0
@@ -96,5 +92,16 @@ function footerLine(theme: ThemeLike, drain: QuotaDrain[], width: number): strin
     return `${paint(theme, providerColor(entry.provider), entry.provider)} ${value}`;
   });
   const right = parts.length > 0 ? `${paint(theme, PALETTE.dim, "usage overnight:")} ${parts.join(paint(theme, PALETTE.dim, " · "))}` : "";
+  const inner = Math.max(0, width - INDENT.length);
+  const actionBudget = Math.max(0, inner - visibleWidth(right) - (right ? 1 : 0));
+  const left = actionGroup(
+    theme,
+    [
+      `${paint(theme, PALETTE.brand, "d")} ${paint(theme, PALETTE.dim, "decisions first")}`,
+      `${paint(theme, PALETTE.brand, "enter")} ${paint(theme, PALETTE.dim, "mission control")}`,
+      `${paint(theme, PALETTE.brand, "l")} ${paint(theme, PALETTE.dim, "full log")}`,
+    ],
+    actionBudget,
+  );
   return truncateToWidth(`${INDENT}${spring(theme, left, right, Math.max(0, width - INDENT.length))}`, width, "");
 }

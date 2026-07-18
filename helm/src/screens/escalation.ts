@@ -15,15 +15,28 @@
  * and the fleet footer.
  */
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { windowLines, wrapPlain } from "./../chrome.js";
+import { actionGroup, windowLines, wrapPlain } from "./../chrome.js";
 import { paint, PALETTE, type ThemeLike } from "./../theme.js";
 import type { Escalation, EscalationOption } from "./../state/types.js";
 
 /** Left gutter (2 cells) so the card body aligns with the other screens. */
 const INDENT = "  ";
 
+export interface EscalationFollowUp {
+  question: string;
+  answer?: string;
+  /** Screen contract name; `at` is accepted for data-lane compatibility. */
+  timestamp?: string | number;
+  at?: string | number;
+}
+
+/** Screen-local follow-up data; shared state remains owned by the data lane. */
+export type EscalationRenderModel = Omit<Escalation, "followUps"> & {
+  followUps?: EscalationFollowUp[];
+};
+
 export function renderEscalation(
-  escalation: Escalation,
+  escalation: EscalationRenderModel,
   theme: ThemeLike,
   width: number,
   height: number,
@@ -53,6 +66,10 @@ export function renderEscalation(
     const body = paintEvidenceLine(theme, raw);
     lines.push(truncateToWidth(`${INDENT}${frame} ${body}`, w, ""));
   }
+  if (escalation.followUps?.length) {
+    lines.push("");
+    pushFollowUps(lines, theme, escalation.followUps, w);
+  }
   lines.push("");
 
   // ── (3) numbered options, recommended highlighted GREEN ──────────────────
@@ -63,19 +80,23 @@ export function renderEscalation(
       : "";
   lines.push(indent(theme, `${paint(theme, PALETTE.label, "options")}${recLabel}`, w));
   escalation.options.forEach((option, index) => {
-    lines.push(optionRow(theme, option, index + 1, w));
+    lines.push(optionRow(theme, option, index + 1, index === recommended, w));
   });
   lines.push("");
 
   // ── (4) key-hint line ─────────────────────────────────────────────────────
   const count = escalation.options.length;
   const range = count > 1 ? `1-${count}` : "1";
-  const dot = ` ${paint(theme, PALETTE.dim, "·")} `;
-  const hint =
-    `${paint(theme, PALETTE.brand, range)} ${paint(theme, PALETTE.dim, "decide")}` +
-    `${dot}${paint(theme, PALETTE.brand, "?")} ${paint(theme, PALETTE.dim, "ask pi more")}` +
-    `${dot}${paint(theme, PALETTE.brand, "[ ]")} ${paint(theme, PALETTE.dim, "prev/next")}` +
-    `${dot}${paint(theme, PALETTE.brand, "enter")} ${paint(theme, PALETTE.dim, "open full session")}`;
+  const hint = actionGroup(
+    theme,
+    [
+      ...(count > 0 ? [`${paint(theme, PALETTE.brand, range)} ${paint(theme, PALETTE.dim, "decide")}`] : []),
+      `${paint(theme, PALETTE.brand, "?")} ${paint(theme, PALETTE.dim, "ask pi more")}`,
+      `${paint(theme, PALETTE.brand, "[ ]")} ${paint(theme, PALETTE.dim, "prev/next")}`,
+      `${paint(theme, PALETTE.brand, "enter")} ${paint(theme, PALETTE.dim, "open full session")}`,
+    ],
+    inner,
+  );
   lines.push(indent(theme, hint, w));
 
   // ── (5) precedent reminder ────────────────────────────────────────────────
@@ -96,11 +117,33 @@ function indent(_theme: ThemeLike, content: string, width: number): string {
 }
 
 /** `  N  <text>` — recommended option is GREEN (number + text); others normal. */
-function optionRow(theme: ThemeLike, option: EscalationOption, num: number, width: number): string {
-  const numColor = option.recommended ? PALETTE.success : PALETTE.dim;
-  const textColor = option.recommended ? PALETTE.success : PALETTE.primary;
+function optionRow(theme: ThemeLike, option: EscalationOption, num: number, isRecommended: boolean, width: number): string {
+  const numColor = isRecommended ? PALETTE.success : PALETTE.dim;
+  const textColor = isRecommended ? PALETTE.success : PALETTE.primary;
   const left = `${paint(theme, numColor, String(num))}  ${paint(theme, textColor, option.text)}`;
   return truncateToWidth(`${INDENT}${left}`, width, "");
+}
+
+/** Follow-up history beneath evidence; unanswered questions remain visibly pending. */
+function pushFollowUps(lines: string[], theme: ThemeLike, followUps: readonly EscalationFollowUp[], width: number): void {
+  lines.push(indent(theme, paint(theme, PALETTE.label, "follow-ups"), width));
+  followUps.forEach((followUp, index) => {
+    const timestamp = followUp.timestamp ?? followUp.at;
+    const stamp = timestamp === undefined
+      ? ""
+      : ` ${paint(theme, PALETTE.dim, "·")} ${paint(theme, PALETTE.dim, String(timestamp))}`;
+    lines.push(
+      indent(
+        theme,
+        `${paint(theme, PALETTE.dim, `${index + 1}.`)} ${paint(theme, PALETTE.primary, followUp.question)}${stamp}`,
+        width,
+      ),
+    );
+    const answer = followUp.answer
+      ? paint(theme, PALETTE.mid, followUp.answer)
+      : paint(theme, PALETTE.warning, "pending");
+    lines.push(indent(theme, `   ${answer}`, width));
+  });
 }
 
 /**

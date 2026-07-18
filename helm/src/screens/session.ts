@@ -17,7 +17,7 @@
  * currently expanded (toggled by `o`).
  */
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { spring, windowLines } from "./../chrome.js";
+import { actionGroup, spring, windowLines } from "./../chrome.js";
 import { GLYPH, paint, PALETTE, type PaletteColor, type ThemeLike } from "./../theme.js";
 import type { ActivityLine, Session, SessionReceipts } from "./../state/types.js";
 
@@ -117,7 +117,9 @@ function resultText(theme: ThemeLike, line: ActivityLine): string {
 function peekRows(theme: ThemeLike, line: ActivityLine, width: number): string[] {
   const rows: string[] = [];
   const indent = " ".repeat(GUTTER + 2 + VERB_COL + 2); // gutter + marker + verb col + gap
-  for (const peek of line.peek ?? []) rows.push(truncateToWidth(`${indent}${paintPeek(theme, peek)}`, width, ""));
+  for (const peek of (line.peek ?? []).slice(0, 3)) {
+    rows.push(truncateToWidth(`${indent}${paintPeek(theme, peek)}`, width, ""));
+  }
   if (line.moreCount && line.moreCount > 0) {
     const hint = `${paint(theme, PALETTE.dim, `… ${line.moreCount} more · `)}${paint(theme, PALETTE.brand, "d")}${paint(theme, PALETTE.dim, " full diff")}`;
     rows.push(truncateToWidth(`${indent}${hint}`, width, ""));
@@ -140,10 +142,14 @@ function paintPeek(theme: ThemeLike, peek: string): string {
 /** Claim sentence + right-aligned one-key actions (`review diff d · merge m`). */
 function claimRow(theme: ThemeLike, claim: string, width: number): string {
   const left = paint(theme, PALETTE.primary, claim);
-  const right =
-    `${paint(theme, PALETTE.dim, "review diff ")}${paint(theme, PALETTE.brand, "d")}` +
-    ` ${paint(theme, PALETTE.dim, "·")} ` +
-    `${paint(theme, PALETTE.dim, "merge ")}${paint(theme, PALETTE.brand, "m")}`;
+  const right = actionGroup(
+    theme,
+    [
+      `${paint(theme, PALETTE.dim, "review diff ")}${paint(theme, PALETTE.brand, "d")}`,
+      `${paint(theme, PALETTE.dim, "merge ")}${paint(theme, PALETTE.brand, "m")}`,
+    ],
+    Math.max(0, width - GUTTER),
+  );
   return truncateToWidth(`  ${spring(theme, left, right, Math.max(0, width - GUTTER))}`, width, "");
 }
 
