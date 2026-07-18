@@ -857,6 +857,7 @@ export class HelmApp implements Component {
     if (ch === "[") return this.cycleEscalation(top.escalationId, -1);
     if (ch === "]") return this.cycleEscalation(top.escalationId, 1);
     if (ch >= "1" && ch <= "9") return this.decideOption(top.escalationId, ch.charCodeAt(0) - "1".charCodeAt(0));
+    if (ch === "p") return;
     this.startTyping(top, ch);
   }
 
