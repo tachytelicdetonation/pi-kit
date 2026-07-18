@@ -242,15 +242,45 @@ export class HelmStore {
   }
 
   declinePrecedent(id: string): boolean {
-    let changed = false;
-    const precedents = this.state.precedents.map((precedent) => {
-      if (precedent.id !== id || precedent.declined) return precedent;
-      changed = true;
-      return { ...precedent, declined: true };
-    });
-    if (changed) this.state = { ...this.state, precedents };
+    const precedent = this.state.precedents.find((item) => item.id === id);
+    return precedent ? this.setPrecedentDeclined(precedent, true) : false;
+  }
+
+  /** Upsert the durable operator decision so closeout receipt copies cannot override it. */
+  setPrecedentDeclined(precedent: Precedent, declined: boolean): boolean {
+    const existing = this.state.precedents.find((item) => item.id === precedent.id);
+    if (existing?.declined === declined) {
+      this.emit();
+      return false;
+    }
+    const canonical = { ...(existing ?? precedent), declined };
+    this.state = {
+      ...this.state,
+      precedents: existing
+        ? this.state.precedents.map((item) => item.id === precedent.id ? canonical : item)
+        : [...this.state.precedents, canonical],
+    };
     this.emit();
-    return changed;
+    return true;
+  }
+
+  /** Mark an accepted closeout precedent as durably applied to repository guidance. */
+  applyPrecedent(precedent: Precedent): boolean {
+    const existing = this.state.precedents.find((item) => item.id === precedent.id);
+    const appliesTo = precedent.appliesTo ?? existing?.appliesTo ?? "claudeMd";
+    if (existing?.appliesTo === appliesTo) {
+      this.emit();
+      return false;
+    }
+    const canonical = { ...(existing ?? precedent), declined: false, appliesTo };
+    this.state = {
+      ...this.state,
+      precedents: existing
+        ? this.state.precedents.map((item) => item.id === precedent.id ? canonical : item)
+        : [...this.state.precedents, canonical],
+    };
+    this.emit();
+    return true;
   }
 
   /** Update a still-active escalation (for persisted follow-up questions/answers). */

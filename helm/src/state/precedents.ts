@@ -12,6 +12,28 @@
  */
 import type { Escalation, Precedent } from "./types.js";
 
+/**
+ * Merge closeout proposal copies with their durable records. Stored records are
+ * canonical because they carry operator state (`declined` / `appliesTo`) that a
+ * closeout receipt may predate. Declined or already-applied records are omitted.
+ */
+export function canonicalProposedPrecedents(
+  proposals: readonly Precedent[],
+  stored: readonly Precedent[],
+): Precedent[] {
+  const storedById = new Map(stored.map((precedent) => [precedent.id, precedent]));
+  const seen = new Set<string>();
+  const result: Precedent[] = [];
+  for (const candidate of [...proposals, ...stored]) {
+    if (seen.has(candidate.id)) continue;
+    seen.add(candidate.id);
+    const canonical = storedById.get(candidate.id) ?? candidate;
+    if (canonical.declined || canonical.appliesTo) continue;
+    result.push(canonical);
+  }
+  return result;
+}
+
 /** The first non-declined precedent matching `signature`, or `undefined`. */
 export function matchingPrecedent(signature: string, precedents: readonly Precedent[]): Precedent | undefined {
   return precedents.find((precedent) => !precedent.declined && precedent.signature === signature);

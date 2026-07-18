@@ -24,7 +24,7 @@ import type {
   UsageDetail,
   WorkflowDetail,
 } from "../state/types.js";
-import { stableDecisionSignature } from "../state/precedents.js";
+import { canonicalProposedPrecedents, stableDecisionSignature } from "../state/precedents.js";
 import {
   genericDrillIn,
   seedCloseout,
@@ -249,7 +249,8 @@ export class RealDataSource implements DataSource {
     for (const paused of checkpoint.loops) {
       const loop = this.store.getState().loops.find((item) => item.id === paused.loopId);
       if (!loop || loop.health === "paused") continue;
-      const nextRunAtMs = now + paused.remainingDelayMs;
+      const prePauseDeadline = checkpoint.pausedAt + paused.remainingDelayMs;
+      const nextRunAtMs = Math.max(now + paused.remainingDelayMs, prePauseDeadline);
       this.store.updateScheduledLoop(loop.id, {
         nextRunAtMs,
         nextRun: `next ${new Date(nextRunAtMs).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`,
@@ -303,6 +304,17 @@ export class RealDataSource implements DataSource {
       this.appendAudit("precedentDeclined", [id], "Declined a precedent", "The precedent will not be proposed or auto-applied again.");
       this.persist();
     }
+  }
+
+  setPrecedentDeclined(precedent: Precedent, declined: boolean): void {
+    if (!this.store.setPrecedentDeclined(precedent, declined)) return;
+    this.appendAudit(
+      declined ? "precedentDeclined" : "precedentAccepted",
+      [precedent.id],
+      declined ? "Declined a precedent" : "Re-accepted a precedent",
+      declined ? "The precedent will not be proposed or auto-applied again." : "The precedent is eligible for closeout application again.",
+    );
+    this.persist();
   }
 
   answerEscalationFollowUp(escalationId: string, questionAt: number, answer: string): void {
@@ -370,13 +382,7 @@ export class RealDataSource implements DataSource {
     const stored = this.closeouts.get(goalId);
     const seed = stored ?? (this.deps.repository ? this.buildCloseout(goalId) : this.deps.synthCloseout(goalId));
     if (!seed) return undefined;
-    const merged = [...seed.proposedPrecedents, ...this.store.getState().precedents];
-    const seen = new Set<string>();
-    const proposedPrecedents = merged.filter((precedent) => {
-      if (precedent.declined || seen.has(precedent.id)) return false;
-      seen.add(precedent.id);
-      return true;
-    });
+    const proposedPrecedents = canonicalProposedPrecedents(seed.proposedPrecedents, this.store.getState().precedents);
     return { ...seed, proposedPrecedents };
   }
 
@@ -602,6 +608,7 @@ export class RealDataSource implements DataSource {
           const closeout = this.getCloseout(command.goalId);
           const decisions = closeout?.proposedPrecedents.map((item) => `- ${item.question}: ${item.decision}`).join("\n") || "- No proposed precedents";
           const ids = closeout?.proposedPrecedents.map((item) => item.id) ?? [];
+          for (const precedent of closeout?.proposedPrecedents ?? []) this.store.applyPrecedent(precedent);
           this.appendAudit("precedentApplied", [command.goalId, ...ids], "Handed approved precedents to the application workflow", decisions);
           this.persist();
           return { ok: true, agentPrompt: `Apply these approved Helm precedents to the most appropriate repository guidance (CLAUDE.md or a focused skill). Inspect existing guidance first, make the smallest coherent edit, run relevant validation, and commit it separately.\n\n${decisions}` };

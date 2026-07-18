@@ -330,6 +330,7 @@ export interface AuditRecord {
     | "resume"
     | "autoResolve"
     | "precedentApplied"
+    | "precedentAccepted"
     | "precedentDeclined"
     | "loopPromoted"
     | "selfCaughtPause";

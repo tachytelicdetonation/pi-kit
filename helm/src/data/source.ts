@@ -104,6 +104,8 @@ export interface DataSource {
   precedents(): Precedent[];
   /** Persistently decline a proposed precedent; it will never be proposed/applied again. */
   declinePrecedent(id: string): void;
+  /** Persist a closeout digit toggle immediately; optional for legacy/custom sources. */
+  setPrecedentDeclined?(precedent: Precedent, declined: boolean): void;
   /** Append an answer to an existing follow-up without resolving/closing the card. */
   answerEscalationFollowUp(escalationId: string, questionAt: number, answer: string): void;
 
