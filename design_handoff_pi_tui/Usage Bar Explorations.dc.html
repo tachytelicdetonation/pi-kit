@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+body { margin: 0; background: #0e0f12; }
+a { color: #8ab4f8; } a:hover { color: #aecbfa; }
+</style>
+</helmet>
+<section data-screen-label="Turn 8" style="background: #0e0f12; box-sizing: border-box; padding: 48px; display: flex; flex-direction: column; gap: 28px; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;">
+  <div style="color: #9aa0ac; font-size: 14px; max-width: 940px; line-height: 1.7;">
+    <span style="color: #e6e9ef; font-weight: 700;">Turn 8 — Gap check + end-to-end interaction spec.</span> Gap analysis found four holes, all closed by spec (no new screens needed): a <span style="color: #d4d8e0;">loop drill-in</span> (reuses <a href="#6c">6c</a>'s layout with run history), a <span style="color: #d4d8e0;">global pause</span> (panic switch), <span style="color: #d4d8e0;">search/audit</span> (one incremental finder over goals/PRs/decisions/precedents), and a <span style="color: #d4d8e0;">usage popover</span> (the 2b bar, expanded). Everything below is implementable as-is.
+  </div>
+  <div style="display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start;">
+
+    <!-- 8a -->
+    <div id="8a" style="width: 980px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">8a</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Navigation model + global keys</span>
+        <span style="color: #6b7280; font-size: 13px;">— one mental rule: esc goes up, enter goes down, typing always talks to pi</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 18px 22px 16px; font-size: 13.5px; line-height: 1.8; white-space: pre; overflow-x: auto;"><div style="white-space: pre;"><span style="color: #4d5158;">screen graph · enter descends, esc ascends, no dead ends</span></div><div style="height: 1.35em;"></div><div style="white-space: pre;"><span style="color: #8d93a1;">catch-up digest</span> <span style="color: #3d4048;">(7c, on launch if &gt;30 min away)</span></div><div style="white-space: pre;">&#160;&#160;&#160;<span style="color: #3d4048;">└─▸</span> <span style="color: #d4d8e0; font-weight: 700;">mission control</span> <span style="color: #3d4048;">(6b — home)</span></div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">├─▸</span> <span style="color: #8d93a1;">intent intake</span> <span style="color: #3d4048;">(6a — just start typing)</span></div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">├─▸</span> <span style="color: #8d93a1;">escalation card</span> <span style="color: #3d4048;">(7b — press its number)</span> <span style="color: #3d4048;">─▸ session view (4a)</span></div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">├─▸</span> <span style="color: #8d93a1;">workflow drill-in</span> <span style="color: #3d4048;">(6c)</span> <span style="color: #3d4048;">─▸ session view (4a) per worktree</span></div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">├─▸</span> <span style="color: #8d93a1;">loop drill-in</span> <span style="color: #3d4048;">(6c layout: run history + guardrails)</span> <span style="color: #3d4048;">─▸ loop builder (7a) to edit</span></div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">└─▸</span> <span style="color: #8d93a1;">goal closeout</span> <span style="color: #3d4048;">(7d, replaces goal row when done)</span></div><div style="height: 1.35em;"></div><div style="white-space: pre;"><span style="color: #4d5158;">global keys · work on every screen</span></div><div style="white-space: pre;">&#160;&#160;<span style="color: #8d93a1;">unbound key</span>  focuses the prompt and types <span style="color: #3d4048;">(Gmail rule: bound keys below execute while the prompt is empty; any unbound printable starts typing to pi)</span></div><div style="white-space: pre;">&#160;&#160;<span style="color: #8d93a1;">esc</span>          up one level; at home: clears prompt; twice at home: nothing (never quits)</div><div style="white-space: pre;">&#160;&#160;<span style="color: #8d93a1;">enter</span>        drill into selected row</div><div style="white-space: pre;">&#160;&#160;<span style="color: #8d93a1;">j / k · ↓ ↑</span>  move selection through rows</div><div style="white-space: pre;">&#160;&#160;<span style="color: #8d93a1;">1–9</span>          answer/act on numbered items (escalations, options, lessons)</div><div style="white-space: pre;">&#160;&#160;<span style="color: #8d93a1;">tab</span>          next "needs you" item, anywhere — the triage accelerator</div><div style="white-space: pre;">&#160;&#160;<span style="color: #8d93a1;">/</span>            search everything: goals, PRs, decisions, precedents, loop runs</div><div style="white-space: pre;">&#160;&#160;<span style="color: #8d93a1;">ctrl+u</span>       usage popover: per-provider quotas (2b expanded), burn, spend caps</div><div style="white-space: pre;">&#160;&#160;<span style="color: #8d93a1;">ctrl+p</span>       PAUSE ALL — every agent freezes mid-step; ctrl+p again resumes <span style="color: #3d4048;">(footer turns yellow while paused)</span></div><div style="white-space: pre;">&#160;&#160;<span style="color: #8d93a1;">?</span>            key help overlay for the current screen</div>      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 940px;">Two-mode rule an operator can hold in their head: bound keys execute while the prompt is empty; any unbound printable starts typing to pi. <span style="color: #8d93a1;">tab</span> is the whole triage loop — it walks you through every pending decision across all goals and loops without touching the mouse-equivalent navigation.</div>
+    </div>
+
+    <!-- 8b -->
+    <div id="8b" style="width: 980px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">8b</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Per-panel keys + behavior</span>
+        <span style="color: #6b7280; font-size: 13px;">— the complete contract, screen by screen</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 18px 22px 16px; font-size: 13.5px; line-height: 1.8; white-space: pre; overflow-x: auto;"><div style="white-space: pre;"><span style="color: #aeb4c0; font-weight: 700;">6a intake</span>   <span style="color: #8d93a1;">g</span> go (locks intent, spawns) · <span style="color: #8d93a1;">e</span> edit plan (j/k pick a line, enter rewrites it in chat) · <span style="color: #8d93a1;">x</span> discard</div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">behavior: plan re-renders live as you answer; g disabled (dim) until pi has no open questions</span></div><div style="height: 1.35em;"></div><div style="white-space: pre;"><span style="color: #aeb4c0; font-weight: 700;">6b home</span>     <span style="color: #8d93a1;">enter</span> drill · <span style="color: #8d93a1;">p</span> pause/resume selected goal, workflow, or loop · <span style="color: #8d93a1;">n</span> new goal · <span style="color: #8d93a1;">N</span> new loop</div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">behavior: rows re-sort only on state change, never on progress ticks (no jumpy lists);</span></div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">needs-you items also raise a bell + OS notification if unfocused &gt; 60s</span></div><div style="height: 1.35em;"></div><div style="white-space: pre;"><span style="color: #aeb4c0; font-weight: 700;">6c drill-in</span> <span style="color: #8d93a1;">enter</span> worktree session · <span style="color: #8d93a1;">p</span> pause worktree · <span style="color: #8d93a1;">r</span> reassign its queue slice · <span style="color: #8d93a1;">t</span> test-race detail</div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">behavior: burn-down + ETA update once/min; chips animate only on state transitions</span></div><div style="height: 1.35em;"></div><div style="white-space: pre;"><span style="color: #aeb4c0; font-weight: 700;">4a session</span>  <span style="color: #8d93a1;">d</span> full diff · <span style="color: #8d93a1;">m</span> merge · <span style="color: #8d93a1;">i</span> interrupt &amp; steer (agent finishes current write, then listens)</div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">behavior: read/grep/bash stay collapsed; o on a line expands that one action only</span></div><div style="height: 1.35em;"></div><div style="white-space: pre;"><span style="color: #aeb4c0; font-weight: 700;">7a loop</span>     <span style="color: #8d93a1;">t</span> trial run · after trial: <span style="color: #8d93a1;">s</span> accept schedule · <span style="color: #8d93a1;">r</span> revise · <span style="color: #8d93a1;">x</span> discard</div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">behavior: guardrail edits after go-live re-run one supervised trial before applying; a failed trial reports + reopens the builder, never auto-retries</span></div><div style="height: 1.35em;"></div><div style="white-space: pre;"><span style="color: #aeb4c0; font-weight: 700;">7b escalate</span> <span style="color: #8d93a1;">1–9</span> decide · <span style="color: #8d93a1;">?</span> ask follow-up (answer appends to card) · <span style="color: #8d93a1;">[ ]</span> prev/next escalation · <span style="color: #8d93a1;">enter</span> session</div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">behavior: decision + rationale saved as precedent; identical future conflicts auto-resolve and note it</span></div><div style="height: 1.35em;"></div><div style="white-space: pre;"><span style="color: #aeb4c0; font-weight: 700;">7c digest</span>   <span style="color: #8d93a1;">d</span> decision queue (tab-walk) · <span style="color: #8d93a1;">enter</span> home · <span style="color: #8d93a1;">l</span> full log</div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">behavior: shows on launch only if away &gt; 30 min; otherwise straight to home</span></div><div style="height: 1.35em;"></div><div style="white-space: pre;"><span style="color: #aeb4c0; font-weight: 700;">7d closeout</span> <span style="color: #8d93a1;">a</span> apply precedents (patches CLAUDE.md/skills via one supervised commit) · <span style="color: #8d93a1;">r</span> report · <span style="color: #8d93a1;">x</span> archive</div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">behavior: archived goals remain searchable via / forever; precedents declined are never re-proposed</span></div><div style="height: 1.35em;"></div><div style="white-space: pre;"><span style="color: #aeb4c0; font-weight: 700;">footer</span>      <span style="color: #3d4048;">always visible, every screen: cwd │ 2b provider bar │ ctx (session) or burn+spend (fleet) │ model</span></div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;<span style="color: #3d4048;">ctrl+u popover: per-provider %, resets ("codex resets fri"), spend today/week, per-goal cost split</span></div>      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 940px;">Cross-cutting guarantees: no action is destructive without a confirm except pause (always safe); every screen's right column is status, never controls; anything pi did autonomously is reachable within two keys (<span style="color: #8d93a1;">/</span> then enter) for audit. This plus the panels above is a complete build spec.</div>
+    </div>
+
+  </div>
+</section>
+<section data-screen-label="Turn 7" style="background: #0e0f12; box-sizing: border-box; padding: 48px; display: flex; flex-direction: column; gap: 28px; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;">
+  <div style="color: #9aa0ac; font-size: 14px; max-width: 940px; line-height: 1.7;">
+    <span style="color: #e6e9ef; font-weight: 700;">Turn 7 — The missing panels.</span> Everything else a stage-4 operator touches: creating a loop (<a href="#7a">7a</a>), answering an escalation (<a href="#7b">7b</a>), catching up after being away (<a href="#7c">7c</a>), and closing out a goal (<a href="#7d">7d</a>). All reachable from <a href="#6b">6b</a>; same rule everywhere — outcomes and decisions, never tool noise.
+  </div>
+  <div style="display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start;">
+
+    <!-- 7a -->
+    <div id="7a" style="width: 980px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">7a</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Loop builder</span>
+        <span style="color: #6b7280; font-size: 13px;">— loops are defined in conversation, then earn their schedule via a trial run</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 18px 22px 16px; font-size: 13.5px; line-height: 1.75; overflow-x: auto;">
+        <div style="display: flex; color: #4d5158;"><span><span style="color: #8ab4f8; font-weight: 700;">pi</span> · new loop</span><span style="flex: 1;"></span><span>draft</span></div>
+        <div style="border-bottom: 1px solid #26282f; margin: 8px 0 12px;"></div>
+        <div style="color: #d4d8e0; max-width: 820px;"><span style="color: #6b7280;">❯</span> watch our github issues, fix anything that's a real bug, run tests, open a PR</div>
+        <div style="height: 8px;"></div>
+        <div style="color: #8d93a1;">loop · <span style="color: #aeb4c0;">gh-issues</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 20px;"><span style="width: 110px; color: #4d5158;">trigger</span><span>new issue labeled bug, or existing issue gets a repro</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 20px;"><span style="width: 110px; color: #4d5158;">steps</span><span>triage → reproduce → fix in own worktree → verify → PR w/ repro test</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 20px;"><span style="width: 110px; color: #4d5158;">skips</span><span>feature requests, questions, anything needing a product call → escalates</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 20px;"><span style="width: 110px; color: #4d5158;">guardrails</span><span>never merges · $3/day cap · max 3 concurrent · <span style="color: #a78bfa;">haiku-5</span> for triage step</span></div>
+        <div style="display: flex; flex-wrap: wrap; row-gap: 2px; color: #4d5158; margin-top: 8px;"><span style="white-space: nowrap;">trial: run once on issue #4307 under full review, then propose a schedule</span><span style="flex: 1; min-width: 24px;"></span><span style="white-space: nowrap;"><span style="color: #3ecf6e; font-weight: 700;">t</span> trial run · <span style="color: #8d93a1;">e</span> edit · <span style="color: #8d93a1;">x</span> discard</span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 940px;">You describe the loop; pi structures it into trigger / steps / skips / guardrails you can read in five seconds. No loop goes live directly — the trial run executes once under full review, and only then does it appear in 6b's <span style="color: #8d93a1;">∞ loops</span> with a schedule. A failed trial never auto-retries — it reports and reopens this builder.</div>
+    </div>
+
+    <!-- 7b -->
+    <div id="7b" style="width: 980px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">7b</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Escalation card</span>
+        <span style="color: #6b7280; font-size: 13px;">— what opens when you press <span style="color: #8d93a1;">1</span> on a "needs you" row; a decision, pre-chewed</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 18px 22px 16px; font-size: 13.5px; line-height: 1.75; overflow-x: auto;">
+        <div style="display: flex; color: #4d5158;"><span><span style="color: #8ab4f8; font-weight: 700;">pi</span> · needs you 1/2 · esm › codemod</span><span style="flex: 1;"></span><span>blocked 12 min · wt-3 idle while you decide</span></div>
+        <div style="border-bottom: 1px solid #26282f; margin: 8px 0 12px;"></div>
+        <div style="color: #d4d8e0; max-width: 820px;">pkg/api's ESM rewrite requires touching <span style="color: #aeb4c0;">exports.map.json</span> — you told me to avoid it: platform team merged a conflicting change 40 min ago.</div>
+        <div style="height: 8px;"></div>
+        <div style="margin: 0 0 8px; border-left: 2px solid #26282f; padding-left: 14px; color: #6b7280;">
+          <div style="color: #4d5158;">the 4-line conflict, not the 300-line file:</div>
+          <div><span style="color: #f05c5c;">−</span> <span style="color: #e8b4b8;">"./api": "./dist/api.cjs"</span> <span style="color: #4d5158;">(theirs, merged 40m ago)</span></div>
+          <div><span style="color: #3ecf6e;">+</span> <span style="color: #b6e3c5;">"./api": { "import": "./dist/api.mjs" }</span> <span style="color: #4d5158;">(what the migration needs)</span></div>
+        </div>
+        <div style="color: #8d93a1;">options <span style="color: #4d5158;">· pi recommends 1</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 20px;"><span style="width: 30px; color: #3ecf6e; font-weight: 700;">1</span><span>keep both: conditional exports block — pi drafts it, platform team auto-CC'd on the PR</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 20px;"><span style="width: 30px; color: #8d93a1;">2</span><span>skip pkg/api's export map, file a ticket to platform, migration continues around it</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 20px;"><span style="width: 30px; color: #8d93a1;">3</span><span>pause pkg/api entirely until you talk to platform</span></div>
+        <div style="display: flex; flex-wrap: wrap; row-gap: 2px; color: #4d5158; margin-top: 8px;"><span style="white-space: nowrap;"><span style="color: #8d93a1;">1-3</span> decide · <span style="color: #8d93a1;">?</span> ask pi more · <span style="color: #8d93a1;">enter</span> open full session</span><span style="flex: 1; min-width: 24px;"></span><span>your call becomes precedent: "export maps → conditional block" is remembered</span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 940px;">An escalation is a decision, not a debugging session: the exact conflict, numbered options with a recommendation, cost of delay in the header. The answer is recorded as precedent so the same question never escalates twice.</div>
+    </div>
+
+    <!-- 7c -->
+    <div id="7c" style="width: 980px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">7c</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Catch-up digest</span>
+        <span style="color: #6b7280; font-size: 13px;">— first screen when you return; "while you were away" in 10 seconds</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 18px 22px 16px; font-size: 13.5px; line-height: 1.75; overflow-x: auto;">
+        <div style="display: flex; color: #4d5158;"><span><span style="color: #8ab4f8; font-weight: 700;">pi</span> · while you were away</span><span style="flex: 1;"></span><span>9:40 pm → 7:15 am · $9.80 spent</span></div>
+        <div style="border-bottom: 1px solid #26282f; margin: 8px 0 12px;"></div>
+        <div style="display: flex; color: #8d93a1;"><span style="width: 30px; color: #3ecf6e;">✓</span><span><span style="color: #d4d8e0;">esm migration 58% → 71%</span> · pkg/core green, 252 merges, 0 rollbacks</span></div>
+        <div style="display: flex; color: #8d93a1;"><span style="width: 30px; color: #3ecf6e;">✓</span><span>gh-issues loop shipped 4 PRs <span style="color: #4d5158;">(#4301 #4303 #4308 #4310)</span> — 2 already approved by your team</span></div>
+        <div style="display: flex; color: #8d93a1;"><span style="width: 30px; color: #e8c35a;">▲</span><span>2 decisions queued <span style="color: #4d5158;">(export map · #4312 API rename)</span> — nothing is blocked-blocked; wt-3 rerouted to pkg/http meanwhile</span></div>
+        <div style="display: flex; color: #8d93a1;"><span style="width: 30px; color: #f05c5c;">✕</span><span>1 self-caught failure: test-repair's flake fix regressed a timing test — auto-reverted, retrying with a different approach</span></div>
+        <div style="display: flex; flex-wrap: wrap; row-gap: 2px; color: #4d5158; margin-top: 8px;"><span style="white-space: nowrap;"><span style="color: #8d93a1;">d</span> decisions first · <span style="color: #8d93a1;">enter</span> mission control · <span style="color: #8d93a1;">l</span> full log</span><span style="flex: 1; min-width: 24px;"></span><span>usage overnight: codex −9% · claude −4% · kimi untouched</span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 940px;">Four line-types, strict order: shipped, shipped-by-loops, needs-you, failed-and-handled. Failures pi already contained are reported, not escalated. The one-key path drops you straight into the decision queue.</div>
+    </div>
+
+    <!-- 7d -->
+    <div id="7d" style="width: 980px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">7d</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Goal closeout</span>
+        <span style="color: #6b7280; font-size: 13px;">— when a goal lands: the receipt, and what pi learned</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 18px 22px 16px; font-size: 13.5px; line-height: 1.75; overflow-x: auto;">
+        <div style="display: flex; color: #4d5158;"><span><span style="color: #8ab4f8; font-weight: 700;">pi</span> · goal complete · migrate repo to ESM</span><span style="flex: 1;"></span><span>started tue 9:04 am · landed thu 3:12 pm</span></div>
+        <div style="border-bottom: 1px solid #26282f; margin: 8px 0 12px;"></div>
+        <div style="display: flex; align-items: baseline; gap: 24px;"><span style="color: #d4d8e0; font-size: 17px; font-weight: 700;">17/17 packages</span><span style="color: #6b7280;"><span style="color: #3ecf6e;">+41.2k</span> <span style="color: #f05c5c;">−38.7k</span> · 611 commits · 100% green</span><span style="flex: 1; min-width: 24px;"></span><span style="color: #6b7280;">$61.40 <span style="color: #4d5158;">(est was ~$40)</span></span></div>
+        <div style="height: 8px;"></div>
+        <div style="display: flex; color: #6b7280;"><span style="width: 130px; color: #4d5158;">your time</span><span>11 decisions · 24 min total attention across 3 days</span></div>
+        <div style="display: flex; color: #6b7280;"><span style="width: 130px; color: #4d5158;">interventions</span><span>2 escalations · 1 self-caught regression (auto-reverted) · 0 rollbacks post-merge</span></div>
+        <div style="display: flex; color: #6b7280;"><span style="width: 130px; color: #4d5158;">overrun why</span><span>pkg/api export-map detour + 2 flaky suites cost ~$18 of retries</span></div>
+        <div style="height: 8px;"></div>
+        <div style="color: #8d93a1;">precedents <span style="color: #4d5158;">· proposed for CLAUDE.md / skills</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 20px;"><span style="width: 30px; color: #8d93a1;">1</span><span>export maps are platform-owned → always draft conditional blocks, CC platform</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 20px;"><span style="width: 30px; color: #8d93a1;">2</span><span>timing-sensitive tests in pkg/net are flaky under parallel runs → serialize them</span></div>
+        <div style="display: flex; flex-wrap: wrap; row-gap: 2px; color: #4d5158; margin-top: 8px;"><span style="white-space: nowrap;"><span style="color: #3ecf6e; font-weight: 700;">a</span> apply precedents · <span style="color: #8d93a1;">r</span> full report · <span style="color: #8d93a1;">x</span> archive goal</span><span style="flex: 1; min-width: 24px;"></span><span>next: pi suggests "q3 perf pass" absorbs wt-1..4 while they're warm</span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 940px;">The receipt answers the manager questions — what landed, what it cost, how much of <em>you</em> it consumed, why the estimate slipped — and turns the goal's friction into one-key precedents (same store 7b writes to), so the next goal starts smarter.</div>
+    </div>
+
+  </div>
+</section>
+<section data-screen-label="Turn 6" style="background: #0e0f12; box-sizing: border-box; padding: 48px; display: flex; flex-direction: column; gap: 28px; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;">
+  <div style="color: #9aa0ac; font-size: 14px; max-width: 940px; line-height: 1.7;">
+    <span style="color: #e6e9ef; font-weight: 700;">Turn 6 — Mission control, rebuilt on your rules.</span> Nothing spawns until intent is explicit (<a href="#6a">6a</a>); the main screen shows only goals, top-level workflows, and active loops — never read/edit/bash (<a href="#6b">6b</a>); drill-in adapts the inspiration shots to worktrees/packages instead of platforms (<a href="#6c">6c</a>). Model tags appear only where a workflow differs from the main model.
+  </div>
+  <div style="display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start;">
+
+    <!-- 6a -->
+    <div id="6a" style="width: 980px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">6a</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Intent intake</span>
+        <span style="color: #6b7280; font-size: 13px;">— plain conversation until you say go; only then do workflows nest out</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 18px 22px 16px; font-size: 13.5px; line-height: 1.75; overflow-x: auto;">
+        <div style="display: flex; color: #4d5158;"><span><span style="color: #8ab4f8; font-weight: 700;">pi</span> · new goal</span><span style="flex: 1;"></span><span>draft · nothing running</span></div>
+        <div style="border-bottom: 1px solid #26282f; margin: 8px 0 12px;"></div>
+        <div style="color: #d4d8e0;"><span style="color: #6b7280;">❯</span> migrate the repo to ESM</div>
+        <div style="height: 8px;"></div>
+        <div style="color: #8d93a1; max-width: 800px;">Before I plan workflows — three things I can't infer:</div>
+        <div style="color: #8d93a1; margin-left: 20px;"><span style="color: #4d5158;">1</span>  scope: all 8 packages, or leave pkg/legacy alone?</div>
+        <div style="color: #8d93a1; margin-left: 20px;"><span style="color: #4d5158;">2</span>  the platform team owns the export maps — coordinate with them or avoid those files?</div>
+        <div style="color: #8d93a1; margin-left: 20px;"><span style="color: #4d5158;">3</span>  merge policy: auto-merge green codemods, or you review everything?</div>
+        <div style="height: 8px;"></div>
+        <div style="color: #d4d8e0; max-width: 800px;"><span style="color: #6b7280;">❯</span> everything except legacy. avoid export maps and flag them to me. auto-merge green.</div>
+        <div style="height: 8px;"></div>
+        <div style="color: #8d93a1;">plan · 3 workflows</div>
+        <div style="display: flex; color: #6b7280; margin-left: 20px;"><span style="width: 150px; color: #aeb4c0;">codemod</span><span>4 worktrees, per-package lanes</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 20px;"><span style="width: 150px; color: #aeb4c0;">test-repair</span><span>follows codemod, own worktree</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 20px;"><span style="width: 150px; color: #aeb4c0;">docs</span><span>starts when codemod is green · <span style="color: #a78bfa;">opus-mini</span></span></div>
+        <div style="display: flex; flex-wrap: wrap; row-gap: 2px; color: #4d5158; margin-top: 8px;"><span style="white-space: nowrap;">est 6–9h wall · ~$40 · export-map touches escalate to you</span><span style="flex: 1; min-width: 24px;"></span><span style="white-space: nowrap;"><span style="color: #3ecf6e; font-weight: 700;">g</span> go · <span style="color: #8d93a1;">e</span> edit plan · <span style="color: #8d93a1;">x</span> discard</span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 940px;">The goal starts as text. Pi asks only questions it can't infer, then presents the plan as a contract: scope, policy, budget, escalation rules. <span style="color: #8d93a1;">g</span> is the moment intent locks and the nested workflows spawn — before that, zero agents.</div>
+    </div>
+
+    <!-- 6b -->
+    <div id="6b" style="width: 980px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">6b</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Mission control</span>
+        <span style="color: #6b7280; font-size: 13px;">— multiple goals, top-level workflows only, loops as first-class citizens</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 18px 22px 16px; font-size: 13.5px; line-height: 1.7; overflow-x: auto;">
+        <div style="display: flex; color: #4d5158;"><span><span style="color: #8ab4f8; font-weight: 700;">pi</span> · mission control</span><span style="flex: 1;"></span><span>2 goals · 3 loops · 61 agents · <span style="color: #e8c35a;">2 need you</span></span></div>
+        <div style="border-bottom: 1px solid #26282f; margin: 8px 0 12px;"></div>
+        <div style="color: #e8c35a;">▲ needs you <span style="color: #4d5158;">(2)</span></div>
+        <div style="display: flex; color: #8d93a1; margin-left: 22px;"><span style="width: 150px; color: #aeb4c0;">esm › codemod</span><span>touched an export map (platform team owns it)</span><span style="flex: 1; min-width: 24px;"></span><span style="color: #6b7280;">review <span style="color: #8d93a1;">1</span></span></div>
+        <div style="display: flex; color: #8d93a1; margin-left: 22px;"><span style="width: 150px; color: #aeb4c0;">gh-issues loop</span><span>#4312 needs a product call on the API rename</span><span style="flex: 1; min-width: 24px;"></span><span style="color: #6b7280;">answer <span style="color: #8d93a1;">2</span></span></div>
+        <div style="height: 12px;"></div>
+        <div style="display: flex;"><span style="color: #4c9df0;">◆ goal</span><span style="color: #d4d8e0;">&nbsp;migrate repo to ESM</span><span style="flex: 1; min-width: 24px;"></span><span style="color: #6b7280; white-space: pre;"><span style="color: #4c9df0;">▮▮▮▮▮▮</span><span style="color: #33363e;">▮▮</span> 71% · ~6h left</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px;"><span style="color: #3d4048;">├ </span><span style="width: 130px; color: #8d93a1;">codemod</span><span>4 worktrees · 14/17 packages</span><span style="flex: 1; min-width: 24px;"></span><span><span style="color: #3ecf6e;">✓</span> tests green</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px;"><span style="color: #3d4048;">├ </span><span style="width: 130px; color: #8d93a1;">test-repair</span><span>worktree wt-5 · 3 flakes open</span><span style="flex: 1; min-width: 24px;"></span><span style="color: #6b7280;">◌ verifying</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px;"><span style="color: #3d4048;">└ </span><span style="width: 130px; color: #8d93a1;">docs</span><span>waiting on codemod ✓</span><span style="flex: 1; min-width: 24px;"></span><span><span style="color: #6b7280;">⏸ queued</span> · <span style="color: #a78bfa;">opus-mini</span></span></div>
+        <div style="height: 8px;"></div>
+        <div style="display: flex;"><span style="color: #4c9df0;">◆ goal</span><span style="color: #d4d8e0;">&nbsp;q3 perf pass</span><span style="flex: 1; min-width: 24px;"></span><span style="color: #6b7280; white-space: pre;"><span style="color: #4c9df0;">▮▮</span><span style="color: #33363e;">▮▮▮▮▮▮</span> 22%</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px;"><span style="color: #3d4048;">└ </span><span style="width: 130px; color: #8d93a1;">profiling</span><span>3 benches running</span><span style="flex: 1; min-width: 24px;"></span><span><span style="color: #4c9df0;">● running</span> · <span style="color: #a78bfa;">gpt-5.6-turbo</span></span></div>
+        <div style="height: 12px;"></div>
+        <div style="color: #3ecf6e;">∞ loops <span style="color: #4d5158;">(3 active)</span></div>
+        <div style="display: flex; color: #8d93a1; margin-left: 22px;"><span style="width: 130px;">gh-issues</span><span style="color: #6b7280;">watch issues → fix → test → PR</span><span style="flex: 1; min-width: 24px;"></span><span style="color: #6b7280;">4 PRs today · $1.10</span></div>
+        <div style="display: flex; color: #8d93a1; margin-left: 22px;"><span style="width: 130px;">ci-red</span><span style="color: #6b7280;">flake hunter, fires on red main</span><span style="flex: 1; min-width: 24px;"></span><span style="color: #6b7280;">idle · last fired 2h ago</span></div>
+        <div style="display: flex; color: #8d93a1; margin-left: 22px;"><span style="width: 130px;">deps</span><span style="color: #6b7280;">nightly bumps + audit</span><span style="flex: 1; min-width: 24px;"></span><span style="color: #6b7280;">next run 02:00</span></div>
+        <div style="height: 14px;"></div>
+        <div style="border-top: 1px solid #4a4258;"></div>
+        <div style="color: #4d5158; padding: 5px 0;"><span style="background: #d4d8e0; color: #17181c;">&#8203; </span> new goal, or steer — "pause perf pass until esm lands"</div>
+        <div style="border-bottom: 1px solid #4a4258;"></div>
+        <div style="height: 8px;"></div>
+        <div style="display: flex; min-width: 100%; width: max-content; box-sizing: border-box; color: #6b7280; white-space: pre;"><span>~/pi-kit <span style="color: #8d93a1;">main</span>  </span><span style="color: #3d4048;">│</span><span>  </span><span style="color: #4c9df0;">▮▮▮▮▮▮▮▮▮</span><span style="color: #f0954c;">▮▮▮▮▮▮▮▮▮▮</span><span style="color: #2dd4bf;">▮</span><span style="color: #33363e;">▮▮▮▮▮▮▮▮▮▮</span><span> 60%  </span><span style="color: #3d4048;">│</span><span>  <span style="color: #8d93a1;">burn</span> 41k tok/min</span><span style="flex: 1; min-width: 24px;"></span><span>$18.40 today · gpt-5.6-sol <span style="color: #4d5158;">auto</span></span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 940px;">Three strata, always in this order: exceptions → goals (top-level workflows only, subagent trees stay folded behind <span style="color: #8d93a1;">enter</span>) → loops. No tool noise ever reaches this screen. Model tags (<span style="color: #a78bfa;">purple</span>) only where a workflow runs something other than the main model.</div>
+    </div>
+
+    <!-- 6c -->
+    <div id="6c" style="width: 980px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">6c</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Workflow drill-in</span>
+        <span style="color: #6b7280; font-size: 13px;">— the inspiration shots, generalized: work queue, worktree pipelines, race to green by package</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 18px 22px 16px; font-size: 13.5px; line-height: 1.7; overflow-x: auto;">
+        <div style="display: flex; color: #4d5158;"><span><span style="color: #8ab4f8; font-weight: 700;">pi</span> · esm › codemod</span><span style="flex: 1;"></span><span>16 lanes × 4 worktrees · 64 agents</span></div>
+        <div style="border-bottom: 1px solid #26282f; margin: 8px 0 12px;"></div>
+        <div style="display: flex;"><span style="color: #d4d8e0; font-size: 17px; font-weight: 700;">1,204</span><span style="color: #6b7280;">&nbsp;imports left <span style="color: #4d5158;">· from 16,000 · burn 410/hr · done ~03:40</span></span><span style="flex: 1; min-width: 24px;"></span><span style="color: #4d5158;">queue: cargo-style error file, grouped by package</span></div>
+        <div style="height: 10px;"></div>
+        <div style="color: #4d5158;">worktrees <span style="color: #8d93a1;">fix → review → apply</span> <span style="color: #4d5158;">(each chip = one agent)</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px; white-space: pre;"><span style="width: 90px; color: #8d93a1;">wt-1</span><span style="width: 130px;">pkg/core</span><span><span style="color: #e8c35a;">▪</span> → <span style="color: #a78bfa;">▪▪</span> → <span style="color: #3ecf6e;">▪</span></span><span style="flex: 1; min-width: 24px;"></span><span><span style="color: #3ecf6e;">252 applied</span> · <span style="color: #3ecf6e;">✓ green 14:02</span></span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px; white-space: pre;"><span style="width: 90px; color: #8d93a1;">wt-2</span><span style="width: 130px;">pkg/cli</span><span><span style="color: #e8c35a;">▪</span> → <span style="color: #a78bfa;">▪▪</span> → <span style="color: #3ecf6e;">▪</span></span><span style="flex: 1; min-width: 24px;"></span><span><span style="color: #6b7280;">55 in review</span> · <span style="color: #f05c5c;">red</span></span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px; white-space: pre;"><span style="width: 90px; color: #8d93a1;">wt-3</span><span style="width: 130px;">pkg/api</span><span><span style="color: #e8c35a;">▪</span> → <span style="color: #a78bfa;">▪▪</span> → <span style="color: #3ecf6e;">▪</span></span><span style="flex: 1; min-width: 24px;"></span><span><span style="color: #6b7280;">39 applied</span> · <span style="color: #f05c5c;">red</span></span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px; white-space: pre;"><span style="width: 90px; color: #8d93a1;">wt-4</span><span style="width: 130px;">pkg/http</span><span><span style="color: #e8c35a;">▪</span> → <span style="color: #a78bfa;">▪▪</span> → <span style="color: #3ecf6e;">▪</span> · <span style="color: #a78bfa;">haiku-5</span></span><span style="flex: 1; min-width: 24px;"></span><span><span style="color: #6b7280;">6 applied</span> · <span style="color: #f05c5c;">red</span></span></div>
+        <div style="height: 10px;"></div>
+        <div style="color: #4d5158;">race to green, by package <span style="color: #8d93a1;">(each tick = a test run)</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px; white-space: pre;"><span style="width: 130px; color: #8d93a1;">pkg/core</span><span><span style="color: #f05c5c;">▊▊ ▊▊▊ ▊</span><span style="color: #f05c5c;">▊</span> <span style="color: #3ecf6e;">▊ ▊▊</span> <span style="color: #3ecf6e;">▊▊▊▊</span></span><span style="flex: 1; min-width: 24px;"></span><span style="color: #3ecf6e;">✓ 14:02</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px; white-space: pre;"><span style="width: 130px; color: #8d93a1;">pkg/cli</span><span><span style="color: #f05c5c;">▊▊▊ ▊ ▊▊</span> <span style="color: #3ecf6e;">▊</span> <span style="color: #f05c5c;">▊▊</span> <span style="color: #3ecf6e;">▊▊</span><span style="color: #f05c5c;">▊</span></span><span style="flex: 1; min-width: 24px;"></span><span style="color: #6b7280;">wobbling</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px; white-space: pre;"><span style="width: 130px; color: #8d93a1;">pkg/api</span><span><span style="color: #f05c5c;">▊ ▊▊▊▊ ▊▊ ▊▊▊</span> <span style="color: #3ecf6e;">▊</span><span style="color: #f05c5c;">▊▊</span></span><span style="flex: 1; min-width: 24px;"></span><span style="color: #f05c5c;">red</span></div>
+        <div style="color: #4d5158; margin-top: 10px;">no read/edit/bash here either — <span style="color: #8d93a1;">enter</span> on a worktree opens its session view (<a href="#4a" style="color: #8ab4f8;">4a</a>) if you truly want the transcript</div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 940px;">The inspiration shots, generalized: the error-file work queue becomes a burn-down counter with ETA; the 64-Claudes worktree grid becomes fix→review→apply pipelines per worktree; "race to green by platform" becomes race to green by package/worktree — the axis that matters for your work. Detail lives one <span style="color: #8d93a1;">enter</span> away, never on this screen.</div>
+    </div>
+
+  </div>
+</section>
+<section data-screen-label="Turn 4" style="background: #0e0f12; box-sizing: border-box; padding: 48px; display: flex; flex-direction: column; gap: 28px; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;">
+  <div style="color: #9aa0ac; font-size: 14px; max-width: 940px; line-height: 1.7;">
+    <span style="color: #e6e9ef; font-weight: 700;">Turn 4 — Ground-up rethink for stage-4 (AI-native) engineering.</span> Two screens of one system. Principles: <span style="color: #d4d8e0;">verbs, not tool names</span> (read/grep/bash are plumbing — show what the agent did); <span style="color: #d4d8e0;">collapsed by default, receipts always</span> (you review outcomes + verification, not keystrokes); <span style="color: #d4d8e0;">exceptions float, progress aggregates</span>; <span style="color: #d4d8e0;">every claim carries proof</span> (tests/build/lint chips). Vanilla 2b bar lives in the footer of both.
+  </div>
+  <div style="display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start;">
+
+    <!-- 4a session view -->
+    <div id="4a" style="width: 980px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">4a</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Session view</span>
+        <span style="color: #6b7280; font-size: 13px;">— the transcript, rethought: activity lines, not tool logs</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 18px 22px 16px; font-size: 13.5px; line-height: 1.7; overflow-x: auto;">
+        <div style="display: flex; color: #4d5158;"><span><span style="color: #8ab4f8; font-weight: 700;">pi</span> · task: add rate limiting to /api</span><span style="flex: 1;"></span><span><span style="color: #3ecf6e;">✓</span> build  <span style="color: #3ecf6e;">✓</span> lint  <span style="color: #3ecf6e;">✓</span> 142 tests</span></div>
+        <div style="border-bottom: 1px solid #26282f; margin: 8px 0 12px;"></div>
+        <div style="color: #d4d8e0;"><span style="color: #6b7280;">❯</span> add per-user rate limiting to the api</div>
+        <div style="height: 10px;"></div>
+        <div style="display: flex; color: #6b7280;"><span style="color: #4d5158; width: 22px;">▸</span><span style="color: #8d93a1; width: 90px;">context</span><span>9 files · src/api src/middleware · skill: api-conventions</span><span style="flex: 1;"></span><span style="color: #4d5158;">2.1s</span></div>
+        <div style="display: flex; color: #6b7280;"><span style="color: #8ab4f8; width: 22px;">⣿</span><span style="color: #8d93a1; width: 90px;">parallel</span><span>read ratelimit.md · grep limiter · bash pnpm ls express</span><span style="flex: 1;"></span><span style="color: #4d5158;">0.8s</span></div>
+        <div style="display: flex; color: #6b7280;"><span style="color: #4d5158; width: 22px;">▾</span><span style="color: #8d93a1; width: 90px;">edit</span><span style="color: #aeb4c0;">src/middleware/ratelimit.ts</span><span style="flex: 1;"></span><span><span style="color: #3ecf6e;">+48</span> <span style="color: #f05c5c;">−0</span></span></div>
+        <div style="margin: 2px 0 2px 112px; border-left: 2px solid #26282f; padding-left: 14px; color: #6b7280;">
+          <div><span style="color: #3d4048;">12</span>  <span style="color: #3ecf6e;">+</span> <span style="color: #b6e3c5;">export function rateLimit(opts: RateLimitOptions) {</span></div>
+          <div><span style="color: #3d4048;">13</span>  <span style="color: #3ecf6e;">+</span> <span style="color: #b6e3c5;">  const bucket = buckets.get(userId) ?? new TokenBucket(opts)</span></div>
+          <div><span style="color: #3d4048;">14</span>  <span style="color: #3ecf6e;">+</span> <span style="color: #b6e3c5;">  if (!bucket.take()) throw new TooManyRequests()</span></div>
+          <div style="color: #4d5158;">… 45 more · <span style="color: #8d93a1;">d</span> full diff</div>
+        </div>
+        <div style="display: flex; color: #6b7280;"><span style="color: #4d5158; width: 22px;">▸</span><span style="color: #8d93a1; width: 90px;">edit</span><span style="color: #aeb4c0;">src/api/server.ts</span><span style="flex: 1;"></span><span><span style="color: #3ecf6e;">+3</span> <span style="color: #f05c5c;">−1</span></span></div>
+        <div style="display: flex; color: #6b7280;"><span style="color: #4d5158; width: 22px;">▾</span><span style="color: #8d93a1; width: 90px;">verify</span><span>pnpm test</span><span style="flex: 1;"></span><span><span style="color: #3ecf6e;">✓ exit 0</span> · <span style="color: #4d5158;">4.2s</span></span></div>
+        <div style="margin: 2px 0 2px 112px; border-left: 2px solid #26282f; padding-left: 14px; color: #6b7280;">142 passed · 0 failed · 3.9s</div>
+        <div style="height: 10px;"></div>
+        <div style="display: flex; color: #d4d8e0; line-height: 1.65;"><span style="max-width: 700px;">Added token-bucket rate limiting (100 req/min per user) on all /api routes. Verified end-to-end.</span><span style="flex: 1;"></span><span style="color: #4d5158; align-self: flex-end;">review diff <span style="color: #8d93a1;">d</span> · merge <span style="color: #8d93a1;">m</span></span></div>
+        <div style="height: 14px;"></div>
+        <div style="border-top: 1px solid #4a4258;"></div>
+        <div style="color: #e6e9ef; padding: 5px 0;"><span style="background: #d4d8e0; color: #17181c;">&#8203; </span></div>
+        <div style="border-bottom: 1px solid #4a4258;"></div>
+        <div style="height: 8px;"></div>
+        <div style="display: flex; min-width: 100%; width: max-content; box-sizing: border-box; color: #6b7280; white-space: pre;"><span>~/pi-kit <span style="color: #8d93a1;">main</span>  </span><span style="color: #3d4048;">│</span><span>  </span><span style="color: #4c9df0;">▮▮▮▮▮▮▮▮▮</span><span style="color: #f0954c;">▮▮▮▮▮▮▮▮▮▮</span><span style="color: #2dd4bf;">▮</span><span style="color: #33363e;">▮▮▮▮▮▮▮▮▮▮</span><span> 60%  </span><span style="color: #3d4048;">│</span><span>  ctx <span style="color: #8d93a1;">▮▮▮▮▮</span><span style="color: #33363e;">▮▮▮</span> 60%</span><span style="flex: 1; min-width: 24px;"></span><span>$0.012 · gpt-5.6-sol <span style="color: #4d5158;">high</span></span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 940px;">Every action is one aligned line: <span style="color: #8d93a1;">verb · target · cost/result</span>, right column carries timing and proof. Reads/greps/bash that only gather context collapse into a single <span style="color: #8d93a1;">context</span> line; parallel calls braid into one <span style="color: #8d93a1;">⣿</span> row. Edits show a 3-line peek, never the full stream. Tests run under <span style="color: #8d93a1;">verify</span>, not bash — the loop is a first-class concept. The turn ends with a claim + receipts + one-key actions.</div>
+    </div>
+
+    <!-- 4b fleet view -->
+    <div id="4b" style="width: 980px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">4b</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Fleet view</span> <span style="background: #3a2f1d; color: #e8c35a; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px;">superseded → <a href="#6b" style="color: #e8c35a;">6b</a></span>
+        <span style="color: #6b7280; font-size: 13px;">— steer by intent, monitor by exception (tab-switch from 4a)</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 18px 22px 16px; font-size: 13.5px; line-height: 1.7; overflow-x: auto;">
+        <div style="display: flex; color: #4d5158;"><span><span style="color: #8ab4f8; font-weight: 700;">pi</span> · goal: migrate repo to ESM</span><span style="flex: 1;"></span><span>47 agents · 44 auto · <span style="color: #e8c35a;">3 need you</span></span></div>
+        <div style="border-bottom: 1px solid #26282f; margin: 8px 0 12px;"></div>
+        <div style="color: #e8c35a;">▲ needs you <span style="color: #4d5158;">(3)</span></div>
+        <div style="display: flex; color: #8d93a1; margin-left: 22px;"><span style="width: 130px; color: #aeb4c0;">api-gateway</span><span>export map conflicts with platform team's change</span><span style="flex: 1;"></span><span style="color: #6b7280;">review <span style="color: #8d93a1;">1</span></span></div>
+        <div style="display: flex; color: #8d93a1; margin-left: 22px;"><span style="width: 130px; color: #aeb4c0;">billing</span><span>flaky test: timeout in stripe mock, 2 retries failed</span><span style="flex: 1;"></span><span style="color: #6b7280;">triage <span style="color: #8d93a1;">2</span></span></div>
+        <div style="display: flex; color: #8d93a1; margin-left: 22px;"><span style="width: 130px; color: #aeb4c0;">docs-site</span><span>wants to delete legacy require() shim (breaking)</span><span style="flex: 1;"></span><span style="color: #6b7280;">approve <span style="color: #8d93a1;">3</span></span></div>
+        <div style="height: 12px;"></div>
+        <div style="color: #4c9df0;">● running <span style="color: #4d5158;">(12)</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px; white-space: pre;"><span style="width: 130px; color: #8d93a1;">pkg/core</span><span>rewriting imports 14/17</span><span style="flex: 1;"></span><span><span style="color: #4c9df0;">▮▮▮▮▮▮</span><span style="color: #33363e;">▮▮</span> <span style="color: #3ecf6e;">✓ tests</span></span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px; white-space: pre;"><span style="width: 130px; color: #8d93a1;">pkg/cli</span><span>codemod pass 2/3</span><span style="flex: 1;"></span><span><span style="color: #4c9df0;">▮▮▮▮</span><span style="color: #33363e;">▮▮▮▮</span> <span style="color: #6b7280;">◌ verifying</span></span></div>
+        <div style="display: flex; color: #4d5158; margin-left: 22px;"><span>… 10 more · <span style="color: #8d93a1;">enter</span> to drill into any (opens its 4a session)</span></div>
+        <div style="height: 12px;"></div>
+        <div style="color: #3ecf6e;">✓ merged today <span style="color: #4d5158;">(29)</span></div>
+        <div style="display: flex; color: #6b7280; margin-left: 22px;"><span><span style="color: #3ecf6e;">+12.4k</span> <span style="color: #f05c5c;">−9.1k</span> across 8 packages · 0 regressions · 0 rollbacks</span><span style="flex: 1;"></span><span style="color: #4d5158;">log <span style="color: #8d93a1;">l</span></span></div>
+        <div style="height: 14px;"></div>
+        <div style="border-top: 1px solid #4a4258;"></div>
+        <div style="color: #4d5158; padding: 5px 0;"><span style="background: #d4d8e0; color: #17181c;">&#8203; </span> steer by intent — e.g. "deprioritize docs, finish pkg/core first"</div>
+        <div style="border-bottom: 1px solid #4a4258;"></div>
+        <div style="height: 8px;"></div>
+        <div style="display: flex; min-width: 100%; width: max-content; box-sizing: border-box; color: #6b7280; white-space: pre;"><span>~/pi-kit <span style="color: #8d93a1;">main</span>  </span><span style="color: #3d4048;">│</span><span>  </span><span style="color: #4c9df0;">▮▮▮▮▮▮▮▮▮</span><span style="color: #f0954c;">▮▮▮▮▮▮▮▮▮▮</span><span style="color: #2dd4bf;">▮</span><span style="color: #33363e;">▮▮▮▮▮▮▮▮▮▮</span><span> 60%  </span><span style="color: #3d4048;">│</span><span>  <span style="color: #8d93a1;">burn</span> 41k tok/min</span><span style="flex: 1; min-width: 24px;"></span><span>$18.40 today · gpt-5.6-sol <span style="color: #4d5158;">auto</span></span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 940px;">Exceptions sort to the top with one-key actions; running work is a sampled aggregate (progress + verification state), never a stream; merged work reports as an auditable rollup. The prompt takes intent, not tasks. Footer swaps ctx for fleet-level burn rate + daily spend — the numbers that matter at ~50 agents.</div>
+    </div>
+
+  </div>
+</section>
+<section data-screen-label="Turn 3" style="background: #0e0f12; box-sizing: border-box; padding: 48px; display: flex; flex-direction: column; gap: 28px; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;">
+  <div style="color: #9aa0ac; font-size: 14px; max-width: 900px; line-height: 1.6;">
+    <span style="color: #e6e9ef; font-weight: 700;">Turn 3 — Final: 2b stacked bar.</span> Normal state, narrow-terminal state, and the implementation spec.
+  </div>
+  <div id="3a" style="width: 940px; display: flex; flex-direction: column; gap: 12px;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">3a</span>
+      <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Final footer</span>
+    </div>
+    <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 20px 22px 16px; font-size: 14px; line-height: 1.65; white-space: pre; overflow-x: auto;">
+<div style="color: #4d5158;"># normal — all quotas healthy</div>
+<div style="display: flex; color: #6b7280; align-items: center;"><span>~/pi-kit <span style="color: #8d93a1;">main</span>  </span><span style="color: #3d4048;">│</span><span>  </span><span style="color: #4c9df0;">▮▮▮▮▮▮▮▮▮</span><span style="color: #f0954c;">▮▮▮▮▮▮▮▮▮▮</span><span style="color: #2dd4bf;">▮▮▮▮▮▮</span><span style="color: #33363e;">▮▮▮▮▮</span><span> 83%  </span><span style="color: #3d4048;">│</span><span>  ctx <span style="color: #8d93a1;">▮▮▮▮▮</span><span style="color: #33363e;">▮▮▮</span> 60%  </span><span style="flex: 1;"></span><span>$0.012 · gpt-5.6-sol <span style="color: #4d5158;">high</span></span></div>
+<div style="height: 14px;"></div>
+<div style="color: #4d5158;"># narrow terminal (&lt;90 cols) — cwd and cost drop, bar shrinks to 20 cells</div>
+<div style="display: flex; color: #6b7280; align-items: center;"><span style="color: #4c9df0;">▮▮▮▮▮▮</span><span style="color: #f0954c;">▮▮▮▮▮▮▮</span><span style="color: #2dd4bf;">▮▮▮▮</span><span style="color: #33363e;">▮▮▮</span><span> 83%  </span><span style="color: #3d4048;">│</span><span>  ctx 60%</span><span style="flex: 1;"></span><span>gpt-5.6-sol</span></div>
+    </div>
+    <div style="background: #14151a; border: 1px solid #26282f; border-radius: 8px; padding: 18px 22px; color: #8d93a1; font-size: 13px; line-height: 1.8; white-space: pre; overflow-x: auto;"><div style="white-space: pre;"><span style="color: #e6e9ef; font-weight: 700;">Spec</span></div><div style="white-space: pre;">bar        30 cells wide (2 per "unit-of-3.33%"), glyph U+25AE ▮, no box border</div><div style="white-space: pre;">segments   provider i gets round(remaining_i / N / 100 * cells); colored runs</div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;in fixed provider order; spent budget renders #33363e (gray)</div><div style="white-space: pre;">number     total remaining = avg(remaining_i), dim #6b7280</div><div style="white-space: pre;">ctx meter  8 cells, fg #8d93a1 / empty #33363e, "ctx NN%"</div><div style="white-space: pre;">colors     codex #4c9df0 · claude #f0954c · kimi #2dd4bf · +new: pick next</div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;hue at oklch(0.72 0.15 h), h += 90° per provider</div><div style="white-space: pre;">layout     one row: cwd+branch │ bar NN% │ ctx │ …spring… $cost · model effort</div><div style="white-space: pre;">truncate   &lt;110 cols: drop cwd → &lt;90: drop cost, bar 20 cells → &lt;70: drop ctx</div><div style="white-space: pre;">row 2      keep your existing dim stats line (tokens, cache) as-is, or fold</div><div style="white-space: pre;">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;↑↓ tokens into the right group and delete it entirely</div></div>
+  </div>
+</section>
+<section data-screen-label="Turn 2" style="background: #0e0f12; box-sizing: border-box; padding: 48px; display: flex; flex-direction: column; gap: 28px; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;">
+  <div style="color: #9aa0ac; font-size: 14px; max-width: 900px; line-height: 1.6;">
+    <span style="color: #e6e9ef; font-weight: 700;">Turn 2 — 1a with one unified bar, no labels.</span> Two ways to divide it; both scale to any number of subscriptions.
+  </div>
+  <div style="display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start;">
+
+    <!-- 2a -->
+    <div id="2a" style="width: 880px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">2a</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Equal lanes</span> <span style="background: #3a2f1d; color: #e8c35a; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px;">superseded → <a href="#3a" style="color: #e8c35a;">3a</a></span>
+        <span style="color: #6b7280; font-size: 13px;">— bar split evenly per provider; each lane fills with what's left</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 20px 22px 16px; font-size: 14px; line-height: 1.65; white-space: pre; overflow-x: auto;">
+<div style="color: #d4d8e0;">Hi! How can I help?</div>
+<div style="height: 14px;"></div>
+<div style="border-top: 1px solid #4a4258;"></div>
+<div style="color: #e6e9ef; padding: 6px 0;"><span style="background: #d4d8e0; color: #17181c;">&#8203; </span></div>
+<div style="border-bottom: 1px solid #4a4258;"></div>
+<div style="height: 10px;"></div>
+<div style="display: flex; color: #6b7280; align-items: center;"><span>~/pi-kit <span style="color: #8d93a1;">main</span>  </span><span style="color: #3d4048;">│</span><span>  </span><span style="color: #4c9df0;">▮▮▮▮▮▮▮▮</span><span style="color: #2b3542;">▮▮</span><span style="color: #17181c;">▮</span><span style="color: #f0954c;">▮▮▮▮▮▮▮▮▮</span><span style="color: #3d332a;">▮</span><span style="color: #17181c;">▮</span><span style="color: #2dd4bf;">▮</span><span style="color: #4a2a2d;">▮▮▮▮▮▮▮▮▮</span><span>  </span><span style="color: #3d4048;">│</span><span>  ctx <span style="color: #8d93a1;">▮▮▮▮▮</span><span style="color: #33363e;">▮▮▮</span> 60%  </span><span style="flex: 1;"></span><span>$0.012 · gpt-5.6-sol <span style="color: #4d5158;">high</span></span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 860px;">Each provider gets an equal 10-cell lane (gap between lanes), filled left-to-right with remaining quota; the empty cells keep a dark tint of the provider's hue. A lane under 25% swaps its empty tint to dark red — kimi is screaming here without a single character of text. New subscription = one more lane.</div>
+    </div>
+
+    <!-- 2b -->
+    <div id="2b" style="width: 880px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">2b</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Stacked 100-unit bar</span> <span style="background: #3a2f1d; color: #e8c35a; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px;">finalized → <a href="#3a" style="color: #e8c35a;">3a</a></span>
+        <span style="color: #6b7280; font-size: 13px;">— one bar; each provider's remaining stacks into a total budget</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 20px 22px 16px; font-size: 14px; line-height: 1.65; white-space: pre; overflow-x: auto;">
+<div style="color: #d4d8e0;">Hi! How can I help?</div>
+<div style="height: 14px;"></div>
+<div style="border-top: 1px solid #4a4258;"></div>
+<div style="color: #e6e9ef; padding: 6px 0;"><span style="background: #d4d8e0; color: #17181c;">&#8203; </span></div>
+<div style="border-bottom: 1px solid #4a4258;"></div>
+<div style="height: 10px;"></div>
+<div style="display: flex; color: #6b7280; align-items: center;"><span>~/pi-kit <span style="color: #8d93a1;">main</span>  </span><span style="color: #3d4048;">│</span><span>  </span><span style="color: #4c9df0;">▮▮▮▮▮▮▮▮▮</span><span style="color: #f0954c;">▮▮▮▮▮▮▮▮▮▮</span><span style="color: #2dd4bf;">▮</span><span style="color: #33363e;">▮▮▮▮▮▮▮▮▮▮</span><span> 60%  </span><span style="color: #3d4048;">│</span><span>  ctx <span style="color: #8d93a1;">▮▮▮▮▮</span><span style="color: #33363e;">▮▮▮</span> 60%  </span><span style="flex: 1;"></span><span>$0.012 · gpt-5.6-sol <span style="color: #4d5158;">high</span></span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 860px;">Bar = your combined budget (100 units ÷ N providers); colored runs are what's left of each, gray is spent. One glance gives total runway (60%) — but a single provider running low is harder to spot (kimi is just a thin green sliver), and segment lengths shift as quotas drain.</div>
+    </div>
+
+  </div>
+</section>
+<section data-screen-label="Turn 1" style="background: #0e0f12; min-height: 100vh; box-sizing: border-box; padding: 48px; display: flex; flex-direction: column; gap: 28px; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;">
+  <div style="color: #9aa0ac; font-size: 14px; max-width: 900px; line-height: 1.6;">
+    <span style="color: #e6e9ef; font-weight: 700;">Usage bar + footer explorations.</span> Three directions, each shown as the bottom of your TUI. Blue = codex, orange = claude, teal = kimi. All fit 80 cols with the truncation rules noted under each.
+  </div>
+  <div style="display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start;">
+
+    <!-- 1a -->
+    <div id="1a" style="width: 880px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">1a</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">One-line status</span> <span style="background: #3a2f1d; color: #e8c35a; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px;">superseded → <a href="#3a" style="color: #e8c35a;">3a</a></span>
+        <span style="color: #6b7280; font-size: 13px;">— everything on a single row; 2 lines saved</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 20px 22px 16px; font-size: 14px; line-height: 1.65; white-space: pre; overflow-x: auto;">
+<div style="color: #d4d8e0;">Hi! How can I help?</div>
+<div style="height: 14px;"></div>
+<div style="border-top: 1px solid #4a4258;"></div>
+<div style="color: #e6e9ef; padding: 6px 0;"><span style="background: #d4d8e0; color: #17181c;">&#8203; </span></div>
+<div style="border-bottom: 1px solid #4a4258;"></div>
+<div style="height: 10px;"></div>
+<div style="display: flex; gap: 0; color: #6b7280;"><span>~/pi-kit <span style="color: #8d93a1;">main</span>  </span><span style="color: #3d4048;">│</span><span>  <span style="color: #4c9df0;">●</span> codex <span style="color: #aeb4c0;">82</span>  <span style="color: #f0954c;">●</span> claude <span style="color: #aeb4c0;">~90</span>  <span style="color: #2dd4bf;">●</span> kimi <span style="color: #f05c5c; font-weight: 700;">7</span>  </span><span style="color: #3d4048;">│</span><span>  ctx <span style="color: #8d93a1;">▮▮▮▮▮</span><span style="color: #33363e;">▮▮▮</span> 60%  </span><span style="color: #3d4048;">│</span><span style="flex: 1;"></span><span>$0.012 · gpt-5.6-sol <span style="color: #4d5158;">high</span></span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 860px;">Provider dots carry the color; numbers stay dim until a quota drops below 25%, then turn red. Narrow terminals drop cwd first, then cost. Cheapest on vertical space, but dense.</div>
+    </div>
+
+    <!-- 1b -->
+    <div id="1b" style="width: 880px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">1b</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Per-provider mini bars</span> <span style="background: #3a2f1d; color: #e8c35a; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px;">superseded → <a href="#3a" style="color: #e8c35a;">3a</a></span>
+        <span style="color: #6b7280; font-size: 13px;">— two lines; each subscription gets its own gauge</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 20px 22px 16px; font-size: 14px; line-height: 1.65; white-space: pre; overflow-x: auto;">
+<div style="color: #d4d8e0;">Hi! How can I help?</div>
+<div style="height: 14px;"></div>
+<div style="border-top: 1px solid #4a4258;"></div>
+<div style="color: #e6e9ef; padding: 6px 0;"><span style="background: #d4d8e0; color: #17181c;">&#8203; </span></div>
+<div style="border-bottom: 1px solid #4a4258;"></div>
+<div style="height: 10px;"></div>
+<div style="display: flex; color: #8d93a1;"><span>codex <span style="color: #4c9df0;">▰▰▰▰</span><span style="color: #2b3542;">▰</span> 82%   claude <span style="color: #f0954c;">▰▰▰▰</span><span style="color: #3d332a;">▰</span> ~90%   kimi <span style="color: #2dd4bf;">▰</span><span style="color: #1f3b38;">▰▰▰▰</span> <span style="color: #f05c5c; font-weight: 700;">7%</span></span><span style="flex: 1;"></span><span>ctx <span style="color: #8d93a1;">▰▰▰</span><span style="color: #33363e;">▰▰</span> 60% left</span></div>
+<div style="display: flex; color: #4d5158;"><span>~/Projects/pi-kit <span style="color: #6b7280;">main</span> · ↑2.3k ↓11 · $0.012 · 0.6%/372k</span><span style="flex: 1;"></span><span>gpt-5.6-sol · <span style="color: #6b7280;">high</span></span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 860px;">Replaces the boxed 40-cell bar with 5-cell gauges per provider — the thing you actually track. Empty cells are a dark tint of each color so the gauge reads without labels. Saves the box border + one line vs today.</div>
+    </div>
+
+    <!-- 1c -->
+    <div id="1c" style="width: 880px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #2b2d36; color: #e6e9ef; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">1c</span>
+        <span style="color: #e6e9ef; font-size: 15px; font-weight: 700;">Ambient / warn-only</span> <span style="background: #3a2f1d; color: #e8c35a; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px;">superseded → <a href="#3a" style="color: #e8c35a;">3a</a></span>
+        <span style="color: #6b7280; font-size: 13px;">— quiet by default; quotas surface only when low</span>
+      </div>
+      <div style="background: #17181c; border: 1px solid #26282f; border-radius: 8px; padding: 20px 22px 16px; font-size: 14px; line-height: 1.65; white-space: pre; overflow-x: auto;">
+<div style="color: #d4d8e0;">Hi! How can I help?</div>
+<div style="height: 14px;"></div>
+<div style="display: flex; height: 2px;"><div style="width: 60%; background: #5d6570;"></div><div style="flex: 1; background: #26282f;"></div></div>
+<div style="color: #e6e9ef; padding: 6px 0;"><span style="background: #d4d8e0; color: #17181c;">&#8203; </span></div>
+<div style="border-bottom: 1px solid #26282f;"></div>
+<div style="height: 10px;"></div>
+<div style="display: flex; color: #4d5158;"><span>pi-kit <span style="color: #6b7280;">main</span> · $0.012 · ctx 60%</span><span style="flex: 1;"></span><span><span style="background: #2e2224; color: #f05c5c; padding: 1px 8px; border-radius: 3px;">▲ kimi 7% left</span>  <span style="color: #6b7280;">gpt-5.6-sol high</span></span></div>
+      </div>
+      <div style="color: #6b7280; font-size: 13px; line-height: 1.6; max-width: 860px;">The input's top divider doubles as the context meter (fills + shifts hue as it drains). Healthy quotas are hidden; anything under 25% appears as a red chip. A keypress (e.g. ctrl+u) expands the full per-provider view. Least noise, one footer line.</div>
+    </div>
+
+  </div>
+</section>
+</x-dc>
+</body>
+</html>
