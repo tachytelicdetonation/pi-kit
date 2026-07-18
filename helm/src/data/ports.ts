@@ -10,6 +10,36 @@
  */
 import type { HelmFooterModel, IntakeWorkflowPlan, LoopDraft, Session, UsageDetail, Workflow, WorkflowDetail } from "../state/types.js";
 
+export interface UsageCostRecord {
+  goalId?: string;
+  goalName?: string;
+  costUsd: number;
+  at: number;
+  contributor: string;
+}
+
+export interface UsageAccountingSnapshot {
+  spentUsd: number;
+  providerRemaining: Partial<Record<"codex" | "claude" | "kimi", number>>;
+  records: UsageCostRecord[];
+}
+
+export interface WorkflowGoalMetrics {
+  startedAtMs?: number;
+  completedAtMs?: number;
+  unitsDone: number;
+  unitsTotal: number;
+  unit: string;
+  added?: number;
+  removed?: number;
+  commits?: number;
+  verificationPassed: number;
+  verificationTotal: number;
+  costUsd?: number;
+  interventions: number;
+  largestCostContributor?: { name: string; costUsd: number };
+}
+
 /** The workflow/session backend (dynamic-workflows + claude-cmux, adapted). */
 export interface WorkflowPort {
   /** The current top-level lanes → HelmState.workflows (subagent trees fold behind enter). */
@@ -38,6 +68,10 @@ export interface WorkflowPort {
   runLoop(loop: LoopDraft): Promise<{ ok: boolean; runId?: string }>;
   /** Completion/progress derived from all persisted runs belonging to a Helm goal. */
   getGoalProgress(goalId: string): { progress: number; complete: boolean } | undefined;
+  /** Measured queue, receipt, verification, and accounting totals for one goal. */
+  getGoalMetrics(goalId: string): WorkflowGoalMetrics | undefined;
+  /** Persisted workflow/session cost ledger, including goal attribution. */
+  listUsageCostRecords(): UsageCostRecord[];
   /** Fire when lanes/agents change (WorkflowManager events); returns unsubscribe. */
   subscribe(callback: () => void): () => void;
 }
@@ -48,6 +82,8 @@ export interface UsagePort {
   getFooter(): HelmFooterModel;
   /** The ctrl+u popover detail (per-provider %, reset dates, spend, per-goal split). */
   getUsageDetail(): UsageDetail;
+  /** Numeric lifetime spend/quota snapshot used as the persisted digest baseline. */
+  getAccountingSnapshot(): UsageAccountingSnapshot;
   /** Fire when quota snapshots refresh; returns unsubscribe. */
   subscribe(callback: () => void): () => void;
 }

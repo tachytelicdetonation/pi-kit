@@ -21,6 +21,11 @@ export interface Goal {
   progress: number;
   /** Pre-rendered ETA hint, e.g. "~6h left". Optional (unknown for drafts). */
   etaText?: string;
+  /** Durable lifecycle timestamps used by measured closeout receipts. */
+  startedAtMs?: number;
+  completedAtMs?: number;
+  /** Original intake estimate, preserved verbatim for the closeout comparison. */
+  estCost?: string;
 }
 
 /**
@@ -65,6 +70,8 @@ export interface EscalationOption {
   text: string;
   /** pi's recommended option — highlighted GREEN on the card. At most one true. */
   recommended?: boolean;
+  /** Destructive/permission choices must pass through the app's y/n gate. */
+  requiresConfirm?: boolean;
 }
 
 /**
@@ -108,6 +115,10 @@ export interface Escalation {
   precedentNote?: string;
   /** True once auto-resolved by precedent (kept out of the blocking queue). */
   resolved?: boolean;
+  /** Owning goal when known, so resolved decisions can feed its closeout. */
+  goalId?: string;
+  /** Follow-up questions keep the card active and are persisted with it. */
+  followUps?: { question: string; answer?: string; at: number }[];
 }
 
 /**
@@ -242,6 +253,8 @@ export interface Precedent {
   declined?: boolean;
   /** Where the precedent was proposed to live, if applied (7d). */
   appliesTo?: "claudeMd" | "skill";
+  /** Goal whose escalation produced this decision, when attributable. */
+  goalId?: string;
 }
 
 /** A single provider's overnight quota drain for the 7c digest footer. */
@@ -274,10 +287,23 @@ export interface DigestData {
  */
 export interface JournalEvent {
   id: string;
-  kind: "merged" | "prOpened" | "escalated" | "selfCaughtRevert";
+  kind: JournalEventKind;
   timestampMs: number;
   label: string;
 }
+
+/**
+ * Journal vocabulary. Only the first four user-visible receipt kinds feed digest
+ * lines; goal/loop lifecycle events remain auditable without fabricating PRs.
+ */
+export type JournalEventKind =
+  | "merged"
+  | "prOpened"
+  | "escalated"
+  | "selfCaughtRevert"
+  | "selfCaughtPaused"
+  | "goalStarted"
+  | "loopRunCompleted";
 
 /**
  * 6a — Intent-intake draft. A plain conversation (ZERO agents until "go"): pi asks

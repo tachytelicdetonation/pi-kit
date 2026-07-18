@@ -1,8 +1,8 @@
-import type { UsagePort, WorkflowPort } from "../data/ports.js";
+import type { UsageAccountingSnapshot, UsageCostRecord, UsagePort, WorkflowGoalMetrics, WorkflowPort } from "../data/ports.js";
 import type { ActivityLine, LoopDraft, Session, Workflow, WorkflowDetail, Worktree } from "../state/types.js";
 import type { ClaudeFleetManager } from "../cmux/fleet-manager.js";
 import type { UsageHealthHandle } from "../usage/register.js";
-import { providerRemaining } from "../usage/types.js";
+import { PROVIDER_ORDER, providerRemaining } from "../usage/types.js";
 import type { AgentHistoryEntry } from "../workflows/agent-history.js";
 import type { PersistedAgentState, PersistedRunState } from "../workflows/run-persistence.js";
 import type { WorkflowManager } from "../workflows/workflow-manager.js";
@@ -73,46 +73,271 @@ function detailFor(run: PersistedRunState): WorkflowDetail {
   };
 }
 
-function classifyHistory(history: AgentHistoryEntry[] | undefined): ActivityLine[] {
+type HistoryCategory = "context" | "verify" | "edit";
+
+interface HistoryCall {
+  entry: AgentHistoryEntry;
+  result?: AgentHistoryEntry;
+  category: HistoryCategory;
+  summary: string;
+}
+
+interface DiffReceipt {
+  path: string;
+  added: number;
+  removed: number;
+  peek: string[];
+  moreCount: number;
+}
+
+interface VerificationReceipt {
+  kind: "build" | "lint" | "test";
+  passed: boolean;
+  tests: number;
+  summary: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
+}
+
+function structuredText(text: string): Record<string, unknown> | undefined {
+  try {
+    return asRecord(JSON.parse(text));
+  } catch {
+    return undefined;
+  }
+}
+
+function stringField(record: Record<string, unknown> | undefined, ...keys: string[]): string | undefined {
+  for (const key of keys) if (typeof record?.[key] === "string") return record[key] as string;
+  return undefined;
+}
+
+function commandFor(entry: AgentHistoryEntry): string {
+  const args = structuredText(entry.text);
+  return stringField(args, "cmd", "command", "script") ?? entry.text;
+}
+
+function isVerificationCommand(command: string, tool: string): boolean {
+  return /(?:^|[-_])(test|tests|lint|build|check|verify)(?:$|[-_])/.test(tool)
+    || /(?:^|[;&|]\s*)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|build|check)\b/i.test(command)
+    || /\b(?:pytest|vitest|jest|mocha|cargo\s+test|go\s+test|tsc\b|eslint\b|ruff\s+(?:check|format\s+--check))/.test(command);
+}
+
+function isReadOnlyCommand(command: string): boolean {
+  if (!command.trim() || /(?:^|[^<])>(?!>)|\b(?:rm|mv|cp|touch|mkdir|install|unlink|truncate)\b|\bsed\s+-i\b|\bgit\s+(?:add|commit|merge|rebase|checkout|switch|reset|clean)\b/i.test(command)) return false;
+  const segments = command.split(/&&|\|\||;/).map((part) => part.trim()).filter(Boolean);
+  return segments.length > 0 && segments.every((part) => /^(?:env\s+\S+=\S+\s+)*(?:cd\s+\S+|rg|grep|find|fd|ls|cat|head|tail|wc|pwd|which|type|stat|file|jq|sed\s+-n|git\s+(?:status|diff|log|show|rev-parse|branch\s+--show-current))\b/i.test(part));
+}
+
+function categoryFor(entry: AgentHistoryEntry): HistoryCategory | undefined {
+  const tool = entry.toolName?.toLowerCase() ?? "";
+  if (/(?:^|[-_])(edit|write|patch)(?:$|[-_])/.test(tool) || tool === "apply_patch") return "edit";
+  const command = commandFor(entry);
+  if (isVerificationCommand(command, tool)) return "verify";
+  if (/(?:^|[-_])(read|find|grep|search|list|glob)(?:$|[-_])/.test(tool)) return "context";
+  if (/(exec|bash|command|shell)/.test(tool) && isReadOnlyCommand(command)) return "context";
+  return undefined;
+}
+
+function pairedResult(history: AgentHistoryEntry[], callIndex: number): AgentHistoryEntry | undefined {
+  const call = history[callIndex]!;
+  const tool = call.toolName?.toLowerCase();
+  for (let i = callIndex + 1; i < history.length; i += 1) {
+    const candidate = history[i]!;
+    if (candidate.kind === "toolResult" || candidate.kind === "error") {
+      if (!tool || candidate.toolName?.toLowerCase() === tool) return candidate;
+    }
+  }
+  return undefined;
+}
+
+function pathFromCall(entry: AgentHistoryEntry): string {
+  const args = structuredText(entry.text);
+  const explicit = stringField(args, "path", "file_path", "filePath", "file", "target");
+  if (explicit) return explicit;
+  const patch = stringField(args, "patch", "diff", "content") ?? entry.text;
+  return patch.match(/^\*\*\* (?:Update|Add|Delete) File:\s*(.+)$/m)?.[1]?.trim()
+    ?? patch.match(/^\+\+\+\s+(?:b\/)?(.+)$/m)?.[1]?.trim()
+    ?? "unknown file";
+}
+
+function lineCount(value: string): number {
+  return value ? value.replace(/\n$/, "").split("\n").length : 0;
+}
+
+function diffReceipt(entry: AgentHistoryEntry, result?: AgentHistoryEntry): DiffReceipt {
+  const args = structuredText(entry.text);
+  const resultRecord = result ? structuredText(result.text) : undefined;
+  const path = stringField(resultRecord, "path", "file_path", "filePath", "file") ?? pathFromCall(entry);
+  const patch = stringField(resultRecord, "diff", "patch")
+    ?? stringField(args, "patch", "diff")
+    ?? (/^@@|^\*\*\* (?:Update|Add|Delete) File:/m.test(entry.text) ? entry.text : "");
+  const explicitAdded = typeof resultRecord?.added === "number" ? resultRecord.added : undefined;
+  const explicitRemoved = typeof resultRecord?.removed === "number" ? resultRecord.removed : undefined;
+  const oldText = stringField(args, "oldText", "old_text");
+  const newText = stringField(args, "newText", "new_text", "content");
+  let oldLine = 1;
+  let newLine = 1;
+  let added = 0;
+  let removed = 0;
+  const diffLines: string[] = [];
+  for (const raw of patch.split("\n")) {
+    const hunk = raw.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+    if (hunk) {
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[2]);
+    } else if (raw.startsWith("+") && !raw.startsWith("+++")) {
+      added += 1;
+      diffLines.push(`${newLine} + ${raw.slice(1)}`);
+      newLine += 1;
+    } else if (raw.startsWith("-") && !raw.startsWith("---")) {
+      removed += 1;
+      diffLines.push(`${oldLine} − ${raw.slice(1)}`);
+      oldLine += 1;
+    } else if (!raw.startsWith("\\") && !raw.startsWith("***")) {
+      oldLine += 1;
+      newLine += 1;
+    }
+  }
+  if (!patch && (oldText !== undefined || newText !== undefined)) {
+    removed = lineCount(oldText ?? "");
+    added = lineCount(newText ?? "");
+    for (const [index, line] of (oldText ?? "").split("\n").entries()) if (line) diffLines.push(`${index + 1} − ${line}`);
+    for (const [index, line] of (newText ?? "").split("\n").entries()) if (line) diffLines.push(`${index + 1} + ${line}`);
+  }
+  added = explicitAdded ?? added;
+  removed = explicitRemoved ?? removed;
+  const peek = diffLines.slice(0, 3);
+  return { path, added, removed, peek, moreCount: Math.max(0, diffLines.length - peek.length) };
+}
+
+function testCount(text: string): number {
+  const patterns = [
+    /\btests?\s*[:=]?\s*(\d+)\s+passed\b/i,
+    /\b(\d+)\s+(?:tests?\s+)?pass(?:ed|ing)\b/i,
+    /\bpassed\s*[:=]?\s*(\d+)\b/i,
+    /#\s*tests\s+(\d+)\b/i,
+    /\b(\d+)\s+tests?\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return Number(match[1]);
+  }
+  return 0;
+}
+
+function verificationReceipt(call: AgentHistoryEntry, result?: AgentHistoryEntry): VerificationReceipt {
+  const command = commandFor(call);
+  const tool = call.toolName?.toLowerCase() ?? "";
+  const kind = /lint|eslint|ruff/.test(`${tool} ${command}`) ? "lint" as const
+    : /build|tsc\b|compile/.test(`${tool} ${command}`) ? "build" as const : "test" as const;
+  const output = result?.text ?? "";
+  const failed = !result || Boolean(result.isError)
+    || /\b(?:failed|failure)\b|\b[1-9]\d*\s+errors?\b|"(?:code|exitCode)"\s*:\s*[1-9]/i.test(output);
+  const tests = kind === "test" ? testCount(output) : 0;
+  return { kind, passed: !failed, tests, summary: `${kind} ${failed ? "failed" : "passed"}${tests ? ` · ${tests} tests` : ""}` };
+}
+
+function elapsedText(entries: AgentHistoryEntry[]): string {
+  const stamps = entries.map((entry) => entry.timestamp).filter((value): value is number => value !== undefined);
+  if (stamps.length < 2) return "";
+  const ms = Math.max(...stamps) - Math.min(...stamps);
+  return ms >= 1_000 ? `${(ms / 1_000).toFixed(ms < 10_000 ? 1 : 0)}s` : `${ms}ms`;
+}
+
+function compactCommand(command: string): string {
+  return command.replace(/\s+/g, " ").trim().slice(0, 96);
+}
+
+function callSummary(entry: AgentHistoryEntry, category: HistoryCategory): string {
+  if (category === "edit") return pathFromCall(entry);
+  const command = commandFor(entry);
+  if (/(exec|bash|command|shell)/i.test(entry.toolName ?? "")) return compactCommand(command);
+  const args = structuredText(entry.text);
+  return stringField(args, "path", "file_path", "query", "pattern") ?? entry.toolName ?? category;
+}
+
+function historyCalls(history: AgentHistoryEntry[]): HistoryCall[] {
+  const calls: HistoryCall[] = [];
+  history.forEach((entry, index) => {
+    if (entry.kind !== "toolCall") return;
+    const category = categoryFor(entry);
+    if (!category) return;
+    calls.push({ entry, result: pairedResult(history, index), category, summary: callSummary(entry, category) });
+  });
+  return calls;
+}
+
+export function classifyHistory(history: AgentHistoryEntry[] | undefined): ActivityLine[] {
+  const calls = historyCalls(history ?? []);
   const lines: ActivityLine[] = [];
-  for (const entry of history ?? []) {
-    const tool = entry.toolName?.toLowerCase() ?? "";
-    if (entry.kind === "toolCall" && /(edit|write|patch)/.test(tool)) {
+  for (let index = 0; index < calls.length;) {
+    const current = calls[index]!;
+    const concurrent = current.entry.timestamp === undefined ? [current] : calls.slice(index).filter((call) => call.entry.timestamp === current.entry.timestamp);
+    if (concurrent.length > 1 && calls.slice(index, index + concurrent.length).every((call) => call.entry.timestamp === current.entry.timestamp)) {
+      const elapsed = elapsedText(concurrent.flatMap((call) => [call.entry, ...(call.result ? [call.result] : [])]));
       lines.push({
-        verb: "edit",
-        target: entry.toolName ?? "edit",
-        result: "",
-        expandable: true,
-        peek: [entry.text.slice(0, 220)],
-        added: 0,
-        removed: 0,
+        verb: "parallel",
+        target: concurrent.map((call) => call.summary).join(" · ").slice(0, 180),
+        result: `${concurrent.length} concurrent${elapsed ? ` · ${elapsed}` : ""}`,
       });
-    } else if (entry.kind === "toolCall" && /(test|lint|build|exec|bash|command)/.test(tool)) {
+      index += concurrent.length;
+      continue;
+    }
+    if (current.category === "context") {
+      const group = [current];
+      while (calls[index + group.length]?.category === "context") group.push(calls[index + group.length]!);
+      const elapsed = elapsedText(group.flatMap((call) => [call.entry, ...(call.result ? [call.result] : [])]));
+      lines.push({
+        verb: "context",
+        target: `${group.length} context ${group.length === 1 ? "read" : "reads"}`,
+        result: elapsed || `${group.length} source${group.length === 1 ? "" : "s"}`,
+      });
+      index += group.length;
+      continue;
+    }
+    if (current.category === "verify") {
+      const receipt = verificationReceipt(current.entry, current.result);
       lines.push({
         verb: "verify",
-        target: entry.text.slice(0, 72) || entry.toolName || "command",
-        result: "ran",
-        expandable: true,
-        peek: [entry.text.slice(0, 220)],
+        target: compactCommand(commandFor(current.entry)),
+        result: receipt.summary,
+        expandable: Boolean(current.result),
+        peek: current.result ? [receipt.summary] : undefined,
       });
-    } else if (entry.kind === "toolCall" && /(read|find|grep|search|list)/.test(tool)) {
-      lines.push({ verb: "context", target: entry.toolName ?? "read context", result: "read" });
+    } else {
+      const receipt = diffReceipt(current.entry, current.result);
+      lines.push({
+        verb: "edit",
+        target: receipt.path,
+        result: "",
+        expandable: receipt.peek.length > 0,
+        peek: receipt.peek,
+        moreCount: receipt.moreCount || undefined,
+        added: receipt.added,
+        removed: receipt.removed,
+      });
     }
+    index += 1;
   }
   return lines.slice(-12);
 }
 
 function sessionFor(run: PersistedRunState, agent: PersistedAgentState): Session {
   const lines = classifyHistory(agent.history);
-  const hasVerification = lines.some((line) => line.verb === "verify");
+  const receipts = historyCalls(agent.history ?? [])
+    .filter((call) => call.category === "verify")
+    .map((call) => verificationReceipt(call.entry, call.result));
   return {
     worktreeId: `${run.runId}::${agent.id}`,
     task: agent.label || run.workflowName,
     prompt: agent.prompt,
     receipts: {
-      build: hasVerification && agent.status === "done",
-      lint: hasVerification && agent.status === "done",
-      tests: hasVerification && agent.status === "done" ? 1 : 0,
+      build: receipts.some((receipt) => receipt.kind === "build" && receipt.passed),
+      lint: receipts.some((receipt) => receipt.kind === "lint" && receipt.passed),
+      tests: receipts.filter((receipt) => receipt.kind === "test" && receipt.passed).reduce((total, receipt) => total + receipt.tests, 0),
     },
     lines: lines.length ? lines : [{ verb: "context", target: agent.phase ?? run.workflowName, result: agent.status }],
     claim: agent.error ?? (agent.result === undefined ? `${agent.label} is ${agent.status}.` : String(agent.result).slice(0, 240)),
@@ -160,6 +385,115 @@ phase('Verify')
 const verification = await agent(${JSON.stringify(`Verify the scheduled loop "${loop.name}" completed safely. Inspect the current repository state, run relevant checks, and report violations or failures. Do not merge or publish.`)}, { label: 'verify loop', tier: 'medium' })
 if (!verification) throw new Error('scheduled loop verification produced no result')
 return { result, verification }`;
+}
+
+function timestampMs(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function runCost(run: PersistedRunState): number | undefined {
+  if (typeof run.tokenUsage?.cost === "number" && Number.isFinite(run.tokenUsage.cost)) return Math.max(0, run.tokenUsage.cost);
+  let measured = false;
+  const total = run.agents.reduce((sum, agent) => {
+    const cost = agent.tokenUsage?.cost;
+    if (typeof cost !== "number" || !Number.isFinite(cost)) return sum;
+    measured = true;
+    return sum + Math.max(0, cost);
+  }, 0);
+  return measured ? total : undefined;
+}
+
+function costRecords(manager: WorkflowManager): UsageCostRecord[] {
+  return manager.listAllRuns().flatMap((run) => {
+    const costUsd = runCost(run);
+    if (costUsd === undefined || costUsd <= 0) return [];
+    const args = runArgs(run);
+    return [{
+      goalId: args.helmGoalId,
+      goalName: args.goalName,
+      costUsd,
+      at: timestampMs(run.completedAt ?? run.updatedAt ?? run.startedAt) ?? Date.now(),
+      contributor: args.helmWorkflowName ?? run.workflowName,
+    }];
+  });
+}
+
+function commitsFromHistory(history: AgentHistoryEntry[] | undefined): number {
+  let commits = 0;
+  for (const call of historyCalls(history ?? [])) {
+    if (!/\bgit\s+commit\b/i.test(commandFor(call.entry))) continue;
+    const output = call.result?.text ?? "";
+    if (call.result && !call.result.isError && !/\b(?:failed|error|nothing to commit)\b/i.test(output)) commits += 1;
+  }
+  return commits;
+}
+
+function goalMetrics(manager: WorkflowManager, goalId: string): WorkflowGoalMetrics | undefined {
+  const runs = helmRuns(manager).filter((run) => runArgs(run).helmGoalId === goalId);
+  if (!runs.length) return undefined;
+  let unitsDone = 0;
+  let unitsTotal = 0;
+  let added = 0;
+  let removed = 0;
+  let diffMeasured = false;
+  let commits = 0;
+  let verificationPassed = 0;
+  let verificationTotal = 0;
+  let interventions = 0;
+  let startedAtMs: number | undefined;
+  let completedAtMs: number | undefined;
+  let costUsd = 0;
+  let costMeasured = false;
+  let largestCostContributor: WorkflowGoalMetrics["largestCostContributor"];
+  for (const run of runs) {
+    const started = timestampMs(run.startedAt);
+    const completed = timestampMs(run.completedAt);
+    if (started !== undefined) startedAtMs = startedAtMs === undefined ? started : Math.min(startedAtMs, started);
+    if (completed !== undefined) completedAtMs = completedAtMs === undefined ? completed : Math.max(completedAtMs, completed);
+    unitsTotal += run.agents.length;
+    unitsDone += run.agents.filter((agent) => ["done", "skipped"].includes(agent.status)).length;
+    interventions += ["failed", "aborted", "paused"].includes(run.status) ? 1 : 0;
+    interventions += run.agents.filter((agent) => agent.status === "error").length;
+    const cost = runCost(run);
+    if (cost !== undefined) {
+      costMeasured = true;
+      costUsd += cost;
+    }
+    if (cost !== undefined && (!largestCostContributor || cost > largestCostContributor.costUsd)) {
+      largestCostContributor = { name: runArgs(run).helmWorkflowName ?? run.workflowName, costUsd: cost };
+    }
+    for (const agent of run.agents) {
+      commits += commitsFromHistory(agent.history);
+      for (const call of historyCalls(agent.history ?? [])) {
+        if (call.category === "edit") {
+          const receipt = diffReceipt(call.entry, call.result);
+          diffMeasured = true;
+          added += receipt.added;
+          removed += receipt.removed;
+        } else if (call.category === "verify") {
+          verificationTotal += 1;
+          if (verificationReceipt(call.entry, call.result).passed) verificationPassed += 1;
+        }
+      }
+    }
+  }
+  return {
+    startedAtMs,
+    completedAtMs,
+    unitsDone,
+    unitsTotal,
+    unit: "work units",
+    added: diffMeasured ? added : undefined,
+    removed: diffMeasured ? removed : undefined,
+    commits: commits || undefined,
+    verificationPassed,
+    verificationTotal,
+    costUsd: costMeasured ? costUsd : undefined,
+    interventions,
+    largestCostContributor,
+  };
 }
 
 export function createWorkflowPort(manager: WorkflowManager, getCmux: () => ClaudeFleetManager): WorkflowPort {
@@ -254,6 +588,12 @@ export function createWorkflowPort(manager: WorkflowManager, getCmux: () => Clau
       const completed = runs.filter((run) => run.status === "completed").length;
       return { progress: completed / runs.length, complete: completed === runs.length };
     },
+    getGoalMetrics(goalId) {
+      return goalMetrics(manager, goalId);
+    },
+    listUsageCostRecords() {
+      return costRecords(manager);
+    },
     subscribe(cb) {
       const events = ["complete", "paused", "resumed", "stopped", "error", "phase", "agentStart", "agentEnd"];
       for (const event of events) manager.on(event, cb);
@@ -264,7 +604,19 @@ export function createWorkflowPort(manager: WorkflowManager, getCmux: () => Clau
   };
 }
 
-export function createUsagePort(handle: UsageHealthHandle): UsagePort {
+export function createUsagePort(handle: UsageHealthHandle, manager?: WorkflowManager): UsagePort {
+  const accounting = (): UsageAccountingSnapshot => {
+    const records = manager ? costRecords(manager) : [];
+    const view = handle.service.getView();
+    return {
+      spentUsd: records.reduce((total, record) => total + record.costUsd, 0),
+      providerRemaining: Object.fromEntries(PROVIDER_ORDER.flatMap((provider) => {
+        const remaining = providerRemaining(view.providers.find((state) => state.provider === provider)?.snapshot);
+        return remaining === undefined ? [] : [[provider, remaining]];
+      })),
+      records,
+    };
+  };
   return {
     getFooter() {
       const view = handle.service.getView();
@@ -277,8 +629,20 @@ export function createUsagePort(handle: UsageHealthHandle): UsagePort {
     },
     getUsageDetail() {
       const view = handle.service.getView();
+      const records = accounting().records;
+      const todayStart = new Date(view.now);
+      todayStart.setHours(0, 0, 0, 0);
+      const weekStart = view.now - 7 * 86_400_000;
+      const formatCost = (cost: number) => `$${cost.toFixed(2)}`;
+      const byGoal = new Map<string, { name: string; cost: number }>();
+      for (const record of records) {
+        if (!record.goalId) continue;
+        const existing = byGoal.get(record.goalId) ?? { name: record.goalName ?? record.goalId, cost: 0 };
+        existing.cost += record.costUsd;
+        byGoal.set(record.goalId, existing);
+      }
       return {
-        providers: view.providers.map((provider) => {
+        providers: PROVIDER_ORDER.map((id) => view.providers.find((provider) => provider.provider === id) ?? { provider: id, refreshing: false }).map((provider) => {
           const resetsAt = provider.snapshot?.buckets
             .filter((bucket) => bucket.affectsHealth !== false && bucket.resetsAt !== undefined)
             .reduce<number | undefined>(
@@ -300,11 +664,14 @@ export function createUsagePort(handle: UsageHealthHandle): UsagePort {
             resetText,
           };
         }),
-        spendToday: "—",
-        spendWeek: "—",
-        perGoal: [],
+        spendToday: formatCost(records.filter((record) => record.at >= todayStart.getTime()).reduce((total, record) => total + record.costUsd, 0)),
+        spendWeek: formatCost(records.filter((record) => record.at >= weekStart).reduce((total, record) => total + record.costUsd, 0)),
+        perGoal: [...byGoal.values()]
+          .sort((a, b) => b.cost - a.cost || a.name.localeCompare(b.name))
+          .map((goal) => ({ name: goal.name, cost: formatCost(goal.cost) })),
       };
     },
+    getAccountingSnapshot: accounting,
     subscribe: handle.subscribe,
   };
 }

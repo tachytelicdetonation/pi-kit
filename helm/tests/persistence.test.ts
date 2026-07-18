@@ -21,6 +21,8 @@ function workflowPort(): WorkflowPort {
     trialLoop: () => Promise.resolve({ ok: true, runId: "trial-1" }),
     runLoop: () => Promise.resolve({ ok: true, runId: "loop-1" }),
     getGoalProgress: () => undefined,
+    getGoalMetrics: () => undefined,
+    listUsageCostRecords: () => [],
     subscribe: () => () => {},
   };
 }
@@ -29,6 +31,7 @@ function usagePort(): UsagePort {
   return {
     getFooter: () => ({ providers: [] }),
     getUsageDetail: () => ({ providers: [], spendToday: "—", spendWeek: "—", perGoal: [] }),
+    getAccountingSnapshot: () => ({ spentUsd: 0, providerRemaining: {}, records: [] }),
     subscribe: () => () => {},
   };
 }

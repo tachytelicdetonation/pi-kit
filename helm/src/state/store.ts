@@ -168,7 +168,7 @@ export class HelmStore {
       this.emit();
       return;
     }
-    const precedent = buildPrecedent(escalation, index);
+    const precedent = { ...buildPrecedent(escalation, index), goalId: escalation.goalId };
     this.state = {
       ...this.state,
       precedents: [...this.state.precedents, precedent],
@@ -192,6 +192,16 @@ export class HelmStore {
     }
     this.emit();
     return resolved;
+  }
+
+  /** Update a still-active escalation (for persisted follow-up questions/answers). */
+  updateEscalation(id: string, update: Partial<Omit<Escalation, "id">>): void {
+    this.state = {
+      ...this.state,
+      escalations: this.state.escalations.map((item) => item.id === id ? { ...item, ...update } : item),
+    };
+    this.resort();
+    this.emit();
   }
 
   /**

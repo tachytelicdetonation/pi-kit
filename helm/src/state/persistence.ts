@@ -4,6 +4,11 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Closeout, Escalation, Goal, IntakeDraft, JournalEvent, Loop, LoopDraft, Precedent } from "./types.js";
 
+export interface PersistedUsageSnapshot {
+  spentUsd: number;
+  providerRemaining: Partial<Record<"codex" | "claude" | "kimi", number>>;
+}
+
 export interface PersistedHelmDomain {
   version: 1;
   cwd: string;
@@ -16,6 +21,8 @@ export interface PersistedHelmDomain {
   loopDrafts: LoopDraft[];
   closeouts: Closeout[];
   lastSeenAt?: number;
+  /** Accounting/quota baseline captured at the same instant as lastSeenAt. */
+  usageSnapshot?: PersistedUsageSnapshot;
 }
 
 export interface HelmRepository {
