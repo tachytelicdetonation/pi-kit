@@ -412,11 +412,13 @@ export class RealDataSource implements DataSource {
     const loop = this.store.getState().loops.find((item) => item.id === loopId);
     if (this.deps.repository) {
       if (!loop?.activeDefinition) return undefined;
-      return {
+      const derived: LoopDraft = {
         ...structuredClone(loop.activeDefinition),
         lifecycle: "scheduled",
         trialPassed: true,
       };
+      this.loopDrafts.set(loopId, derived);
+      return derived;
     }
     return this.deps.synthLoopDraft(loopId, loop?.name);
   }

@@ -11,6 +11,7 @@ import type { AuditRecord, HelmState, Loop, LoopDefinition } from "../src/state/
 
 const theme = { getColorMode: () => "256color" as const };
 const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
+const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 function fakeTui(rows: number, columns = 120): TuiLike {
   return { terminal: { rows, columns }, requestRender() {} };
@@ -121,6 +122,10 @@ function openLoopDrillIn(app: HelmApp): void {
   app.handleInput("\r");
 }
 
+function type(app: HelmApp, value: string): void {
+  for (const character of value) app.handleInput(character);
+}
+
 test("failed loop firings appear as failure runs and only primary loop targets are projected", (t) => {
   const loop = loopFixture();
   const ds = persistedSource(t, loop, [
@@ -162,7 +167,7 @@ test("malformed legacy audit records are skipped without breaking the drill-in s
   assert.match(screen, /1 run/);
 });
 
-test("summary and active/pending guardrails remain visible through a 100-run selection window", (t) => {
+test("summary, selected boundary run, and active/pending guardrails survive constrained windowing", (t) => {
   const base = loopFixture();
   const loop = loopFixture(base.id, {
     pendingDraft: {
@@ -185,9 +190,24 @@ test("summary and active/pending guardrails remain visible through a 100-run sel
     assert.match(screen, /pending trial\s+read-only · \$1 cap/, `pending guardrails missing at selection ${selection}`);
     if (selection < 99) app.handleInput("j");
   }
+
+  // Four chrome rows leave body height=5: summary + selected run + guardrail
+  // header + both guardrail rows. The optional run-history header must yield.
+  const constrained = new HelmApp(fakeTui(9), theme, () => {}, ds);
+  openLoopDrillIn(constrained);
+  let screen = constrained.render(120).map(stripAnsi).join("\n");
+  assert.match(screen, /run 99/, "selected first run missing at body height 5");
+  assert.match(screen, /active\s+read-only · \$2 cap/, "active guardrails missing at first boundary");
+  assert.match(screen, /pending trial\s+read-only · \$1 cap/, "pending guardrails missing at first boundary");
+
+  for (let selection = 0; selection < 99; selection++) constrained.handleInput("j");
+  screen = constrained.render(120).map(stripAnsi).join("\n");
+  assert.match(screen, /run 0/, "selected last run missing at body height 5");
+  assert.match(screen, /active\s+read-only · \$2 cap/, "active guardrails missing at last boundary");
+  assert.match(screen, /pending trial\s+read-only · \$1 cap/, "pending guardrails missing at last boundary");
 });
 
-test("persisted loop without a stored draft opens a populated scheduled builder", (t) => {
+test("persisted loop fallback supports edit, trial, schedule, discard, and reopen", async (t) => {
   const loop = loopFixture();
   const ds = persistedSource(t, loop);
   const app = new HelmApp(fakeTui(30), theme, () => {}, ds);
@@ -204,6 +224,41 @@ test("persisted loop without a stored draft opens a populated scheduled builder"
   assert.match(screen, /trial passed under review/);
   assert.equal(ds.getLoopDraft(loop.id)?.lifecycle, "scheduled");
   assert.equal(ds.getLoopDraft(loop.id)?.trialPassed, true);
+
+  app.handleInput("r");
+  app.handleInput("e");
+  type(app, "every 2 hours inspect CI and report regressions");
+  app.handleInput("\r");
+  await flush();
+  assert.equal(ds.getLoopDraft(loop.id)?.trigger, "every 2 hours inspect CI and report regressions");
+  assert.equal(ds.getLoopDraft(loop.id)?.trialPassed, false);
+
+  app.handleInput("t");
+  await flush();
+  assert.equal(ds.getLoopDraft(loop.id)?.trialPassed, true);
+  assert.match(app.render(120).map(stripAnsi).join("\n"), /s accept schedule/);
+
+  app.handleInput("s");
+  await flush();
+  const scheduled = ds.snapshot().loops.find((item) => item.id === loop.id);
+  assert.equal(scheduled?.activeDefinition?.prompt, "every 2 hours inspect CI and report regressions");
+  assert.equal(scheduled?.scheduleEveryMs, 2 * 60 * 60 * 1_000);
+
+  app.handleInput("\r");
+  const beforeDiscard = ds.getLoopDraft(loop.id);
+  app.handleInput("x");
+  app.handleInput("y");
+  await flush();
+  app.handleInput("\r");
+  const reopened = ds.getLoopDraft(loop.id);
+  assert.notStrictEqual(reopened, beforeDiscard, "discard must force a fresh active-definition derivation");
+  assert.equal(reopened?.prompt, "every 2 hours inspect CI and report regressions");
+  assert.match(app.render(120).map(stripAnsi).join("\n"), /s accept schedule/);
+
+  app.handleInput("r");
+  app.handleInput("t");
+  await flush();
+  assert.equal(ds.getLoopDraft(loop.id)?.trialPassed, true, "reopened fallback remains actionable");
 });
 
 test("loop drill-in enter stays put when neither a stored draft nor active definition exists", (t) => {

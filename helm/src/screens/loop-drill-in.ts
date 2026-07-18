@@ -55,14 +55,15 @@ export function renderLoopDrillIn(
   // the active or pending guardrail state.
   const runHeader = sectionLine(theme, "run history", w);
   const separators = h >= summary.length + guardrails.length + 4 ? 2 : 0;
-  const fixedHeight = summary.length + guardrails.length + 1 + separators;
-  const runHeight = Math.max(0, h - fixedHeight);
+  const runSectionHeight = Math.max(0, h - summary.length - guardrails.length - separators);
+  const showRunHeader = runSectionHeight >= 2;
+  const runHeight = Math.max(0, runSectionHeight - (showRunHeader ? 1 : 0));
   const selected = runs.length === 0 ? 0 : Math.max(0, Math.min(runs.length - 1, selection));
   const windowedRuns = windowLines(theme, runRows, selected, runHeight, w);
   const lines = [
     ...summary,
     ...(separators ? [""] : []),
-    runHeader,
+    ...(showRunHeader ? [runHeader] : []),
     ...windowedRuns,
     ...(separators ? [""] : []),
     ...guardrails,
