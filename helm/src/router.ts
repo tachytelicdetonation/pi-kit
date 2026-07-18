@@ -16,6 +16,7 @@ export type Screen =
   | { id: "digest" }
   | { id: "intake"; draftId: string }
   | { id: "drillin"; workflowId: string }
+  | { id: "loopDrillin"; loopId: string }
   | { id: "session"; worktreeId: string }
   | { id: "escalation"; escalationId: string }
   | { id: "loopBuilder"; loopId: string }

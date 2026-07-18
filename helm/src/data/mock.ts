@@ -17,6 +17,7 @@ import type {
   HelmState,
   IntakeDraft,
   LoopDraft,
+  LoopRun,
   Precedent,
   Session,
   UsageDetail,
@@ -25,6 +26,24 @@ import type {
 import type { DataSource, HelmCommand, HelmCommandResult, SearchResult } from "./source.js";
 
 const MAIN_MODEL = "gpt-5.6-sol";
+
+const SEEDED_LOOP_RUNS: Record<string, LoopRun[]> = {
+  "l-gh-issues": [
+    { id: "run-gh-103", loopId: "l-gh-issues", timestamp: "2026-07-18T14:30:00.000Z", outcome: "success", summary: "opened PR #4308 with a regression test", yieldNote: "1 PR opened", cost: "$0.42" },
+    { id: "run-gh-102", loopId: "l-gh-issues", timestamp: "2026-07-18T11:10:00.000Z", outcome: "trial", summary: "supervised trial reproduced issue #4307", yieldNote: "trial evidence retained", cost: "$0.18" },
+    { id: "run-gh-101", loopId: "l-gh-issues", timestamp: "2026-07-17T22:45:00.000Z", outcome: "failure", summary: "issue needed a product decision; paused", cost: "$0.09" },
+  ],
+  "l-ci-red": [
+    { id: "run-ci-203", loopId: "l-ci-red", timestamp: "2026-07-18T13:05:00.000Z", outcome: "failure", summary: "bisect found an ambiguous flaky boundary", cost: "$0.31" },
+    { id: "run-ci-202", loopId: "l-ci-red", timestamp: "2026-07-18T09:20:00.000Z", outcome: "success", summary: "reverted the offending timer change", yieldNote: "main returned green", cost: "$0.27" },
+    { id: "run-ci-201", loopId: "l-ci-red", timestamp: "2026-07-17T18:00:00.000Z", outcome: "trial", summary: "supervised flake-hunter trial completed", cost: "$0.12" },
+  ],
+  "l-deps": [
+    { id: "run-deps-303", loopId: "l-deps", timestamp: "2026-07-18T08:00:00.000Z", outcome: "trial", summary: "supervised audit trial found one major bump", cost: "$0.21" },
+    { id: "run-deps-302", loopId: "l-deps", timestamp: "2026-07-17T08:00:00.000Z", outcome: "success", summary: "opened two patch-only dependency updates", yieldNote: "2 PRs opened", cost: "$0.36" },
+    { id: "run-deps-301", loopId: "l-deps", timestamp: "2026-07-16T08:00:00.000Z", outcome: "failure", summary: "audit failed and the loop paused for review", cost: "$0.14" },
+  ],
+};
 
 /** Chip run for a worktree: one fix, two review, one apply agent (`▪ → ▪▪ → ▪`). */
 const CHIP_RUN = [
@@ -428,9 +447,9 @@ export function seedSearchCorpus(): SearchResult[] {
     { kind: "workflow", label: "test-repair", sublabel: "esm migration", screen: { id: "drillin", workflowId: "w-test-repair" } },
     { kind: "workflow", label: "docs", sublabel: "esm migration", screen: { id: "drillin", workflowId: "w-docs" } },
     { kind: "workflow", label: "profiling", sublabel: "q3 perf pass", screen: { id: "drillin", workflowId: "w-profiling" } },
-    { kind: "loop", label: "gh-issues", sublabel: "4 PRs today", screen: { id: "loopBuilder", loopId: "l-gh-issues" } },
-    { kind: "loop", label: "ci-red", sublabel: "idle · last fired 2h ago", screen: { id: "loopBuilder", loopId: "l-ci-red" } },
-    { kind: "loop", label: "deps", sublabel: "next run 02:00", screen: { id: "loopBuilder", loopId: "l-deps" } },
+    { kind: "loop", label: "gh-issues", sublabel: "4 PRs today", screen: { id: "loopDrillin", loopId: "l-gh-issues" } },
+    { kind: "loop", label: "ci-red", sublabel: "idle · last fired 2h ago", screen: { id: "loopDrillin", loopId: "l-ci-red" } },
+    { kind: "loop", label: "deps", sublabel: "next run 02:00", screen: { id: "loopDrillin", loopId: "l-deps" } },
     {
       kind: "decision",
       label: "touched an export map (platform team owns it)",
@@ -469,6 +488,11 @@ export function seedState(): HelmState {
         health: "healthy",
         yieldToday: "4 PRs today",
         costToday: "$1.20",
+        activeDefinition: seedLoopDraft("l-gh-issues", "gh-issues"),
+        pendingDraft: {
+          ...seedLoopDraft("l-gh-issues", "gh-issues"),
+          guardrails: ["never merges", "$2/day cap", "max 2 concurrent"],
+        },
       },
       {
         id: "l-ci-red",
@@ -477,6 +501,7 @@ export function seedState(): HelmState {
         pipelineSummary: "flake hunter → bisect",
         health: "idle",
         lastFired: "2h ago",
+        activeDefinition: seedLoopDraft("l-ci-red", "ci-red"),
       },
       {
         id: "l-deps",
@@ -485,6 +510,7 @@ export function seedState(): HelmState {
         pipelineSummary: "bumps → audit",
         health: "healthy",
         nextRun: "02:00",
+        activeDefinition: seedLoopDraft("l-deps", "deps"),
       },
     ],
     escalations: [seedExportMapEscalation(), seedApiRenameEscalation()],
@@ -555,6 +581,10 @@ export class MockDataSource implements DataSource {
     const workflow = this.store.getState().workflows.find((w) => w.id === workflowId);
     if (!workflow) return undefined;
     return genericDrillIn(workflow.id, workflow.goalId, workflow.name);
+  }
+
+  listLoopRuns(loopId: string): LoopRun[] {
+    return (SEEDED_LOOP_RUNS[loopId] ?? []).map((run) => ({ ...run }));
   }
 
   getSession(worktreeId: string): Session | undefined {

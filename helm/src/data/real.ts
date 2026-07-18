@@ -18,6 +18,7 @@ import type {
   Loop,
   LoopDefinition,
   LoopDraft,
+  LoopRun,
   Precedent,
   Session,
   TrialVerdict,
@@ -276,6 +277,21 @@ export class RealDataSource implements DataSource {
     return this.deps.workflows.getDrillIn(workflowId);
   }
 
+  listLoopRuns(loopId: string): LoopRun[] {
+    if (!loopId) return [];
+    return (this.store.getState().audit ?? [])
+      .filter((record) => record.kind === "runCompleted" && record.targetIds.includes(loopId))
+      .map((record) => ({
+        id: record.targetIds.find((targetId) => targetId !== loopId) ?? record.id,
+        loopId,
+        timestamp: new Date(record.at).toISOString(),
+        outcome: "success" as const,
+        summary: record.summary,
+        yieldNote: record.detail,
+      }))
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  }
+
   getSession(worktreeId: string): Session | undefined {
     return this.deps.workflows.getSession(worktreeId);
   }
@@ -477,7 +493,7 @@ export class RealDataSource implements DataSource {
         kind: "loop" as const,
         label: loop.name,
         sublabel: loop.pipelineSummary,
-        screen: { id: "loopBuilder" as const, loopId: loop.id },
+        screen: { id: "loopDrillin" as const, loopId: loop.id },
       })),
       ...state.precedents.map((precedent) => ({
         kind: "precedent" as const,

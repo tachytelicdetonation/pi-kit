@@ -288,6 +288,7 @@ test("a stored selection past a shrunk list clamps at read time (render + enter 
       const detail = base.getDrillIn(id);
       return detail && shrink ? { ...detail, worktrees: detail.worktrees.slice(0, 1) } : detail;
     },
+    listLoopRuns: (id: string) => base.listLoopRuns(id),
     getSession: (id: string) => base.getSession(id),
     decide: (escalationId: string, option: number) => base.decide(escalationId, option),
     getEscalation: (id: string) => base.getEscalation(id),
