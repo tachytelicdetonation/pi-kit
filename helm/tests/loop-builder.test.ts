@@ -128,9 +128,9 @@ test("`x` confirms before discarding the builder", async () => {
 
 test("a home LOOP row opens its 7a builder via enter", () => {
   const app = new HelmApp(fakeTui(40, 120), theme, () => {});
-  // Selectable order: 2 escalations, then 4 workflows, then 3 loops. Step to the
-  // first loop row (index 6) and descend.
-  for (let i = 0; i < 6; i++) app.handleInput("j");
+  // Selectable order: 2 escalations, then 2 goals with 4 workflows, then 3 loops.
+  // Step to the first loop row (index 8) and descend.
+  for (let i = 0; i < 8; i++) app.handleInput("j");
   app.handleInput("\r");
   assert.match(stripAnsi(app.render(120)[0]), /new loop/, "enter on a loop row opens the builder");
 });

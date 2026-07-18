@@ -15,7 +15,7 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { column, spring, treePrefix, windowLines } from "./../chrome.js";
 import { GLYPH, paint, PALETTE, type PaletteColor, type ThemeLike } from "./../theme.js";
 import { activeLoopCount, needsYouCount, progressBar8, workflowsForGoal } from "./../state/selectors.js";
-import type { Escalation, HelmState, Loop, Workflow } from "./../state/types.js";
+import type { Escalation, Goal, HelmState, Loop, Workflow } from "./../state/types.js";
 
 /** Left name-column widths per stratum (chosen to match the mock's alignment). */
 const SOURCE_COL = 20;
@@ -66,7 +66,9 @@ export function renderMissionControl(
 
   // ── Stratum 2: goals + top-level workflows ─────────────────────────────
   for (const goal of state.goals) {
-    lines.push(goalHeaderRow(theme, goal, w));
+    if (selected()) anchor = lines.length;
+    lines.push(goalHeaderRow(theme, goal, selected(), w));
+    cursor += 1;
     const workflows = workflowsForGoal(state, goal.id);
     workflows.forEach((workflow, index) => {
       const isLast = index === workflows.length - 1;
@@ -96,7 +98,7 @@ export function renderMissionControl(
   return windowLines(theme, lines, anchor, h, w);
 }
 
-/** A non-selectable section/goal header: 2-space gutter, then content. */
+/** A non-selectable section header: 2-space gutter, then content. */
 function headerLine(theme: ThemeLike, content: string, width: number): string {
   return truncateToWidth(`  ${content}`, width, "");
 }
@@ -116,15 +118,14 @@ function escalationRow(theme: ThemeLike, escalation: Escalation, num: number, is
   return selectableRow(theme, left, right, isSelected, width);
 }
 
-function goalHeaderRow(theme: ThemeLike, goal: { name: string; progress: number; etaText?: string }, width: number): string {
+function goalHeaderRow(theme: ThemeLike, goal: Goal, isSelected: boolean, width: number): string {
   const left = `${paint(theme, PALETTE.brand, GLYPH.goal)} ${paint(theme, PALETTE.dim, "goal")} ${paint(theme, PALETTE.bright, goal.name)}`;
   const { filled, empty } = progressBar8(goal.progress);
   const bar = paint(theme, PALETTE.brand, GLYPH.bar.repeat(filled)) + paint(theme, PALETTE.spent, GLYPH.bar.repeat(empty));
   const percent = Math.round(Math.min(1, Math.max(0, goal.progress)) * 100);
   const eta = goal.etaText ? ` ${paint(theme, PALETTE.dim, `· ${goal.etaText}`)}` : "";
   const right = `${bar} ${paint(theme, PALETTE.dim, `${percent}%`)}${eta}`;
-  // Goal headers are not selectable, but share the 2-cell gutter for alignment.
-  return truncateToWidth(`  ${spring(theme, left, right, Math.max(0, width - GUTTER))}`, width, "");
+  return selectableRow(theme, left, right, isSelected, width);
 }
 
 /** State glyph + color + word for a workflow lane. */

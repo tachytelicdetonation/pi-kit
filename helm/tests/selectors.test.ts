@@ -39,7 +39,7 @@ test("activeLoopCount excludes paused loops", () => {
   assert.equal(activeLoopCount(paused), 2);
 });
 
-test("selectableRows lists escalations, then per-goal workflows, then loops", () => {
+test("selectableRows lists escalations, then each goal and its workflows, then loops", () => {
   const rows = selectableRows(seedState());
   assert.deepEqual(rows.slice(0, 2).map((r) => r.kind), ["escalation", "escalation"]);
   assert.deepEqual(
@@ -47,14 +47,16 @@ test("selectableRows lists escalations, then per-goal workflows, then loops", ()
     [
       "e-export-map",
       "e-api-rename",
+      "g-esm",
       "w-codemod",
       "w-test-repair",
       "w-docs",
+      "g-perf",
       "w-profiling",
       "l-gh-issues",
       "l-ci-red",
       "l-deps",
     ],
   );
-  assert.equal(selectableCount(seedState()), 9);
+  assert.equal(selectableCount(seedState()), 11);
 });

@@ -93,13 +93,17 @@ test("esc at home with an empty buffer never quits", () => {
   assert.equal(closed, false);
 });
 
-test("'q' with an empty buffer exits via done()", () => {
+test("'q' with an empty buffer types to the prompt; ctrl+q exits via done()", () => {
   const { tui } = fakeTui(20, 80);
   let closed = false;
   const app = new HelmApp(tui, theme, () => {
     closed = true;
   });
   app.handleInput("q");
+  assert.equal(closed, false);
+  const promptLine = app.render(80).map(stripAnsi).find((line) => line.includes("❯"));
+  assert.match(promptLine!, /❯ q$/);
+  app.handleInput("\x11");
   assert.equal(closed, true);
 });
 
@@ -137,7 +141,8 @@ test("p on a workflow row pauses that lane via the data source", () => {
   const { tui } = fakeTui(30, 120);
   const source = new MockDataSource();
   const app = new HelmApp(tui, theme, () => {}, source);
-  // Two escalations precede the workflows; step down onto the first workflow.
+  // Two escalations and the first goal precede its workflows.
+  app.handleInput("j");
   app.handleInput("j");
   app.handleInput("j");
   app.handleInput("p");
@@ -172,7 +177,8 @@ test("tiny and zero terminals never throw and never overflow", () => {
 
 /** Navigate home → drillin (selecting the first workflow row) → session. */
 function intoSession(app: HelmApp) {
-  app.handleInput("j"); // two escalations precede the workflows
+  app.handleInput("j"); // two escalations and the goal precede the workflows
+  app.handleInput("j");
   app.handleInput("j"); // now on the first workflow (w-codemod)
   app.handleInput("\r"); // enter → drillin
   app.handleInput("\r"); // enter → session (first worktree)
@@ -181,6 +187,7 @@ function intoSession(app: HelmApp) {
 test("enter on a 6b workflow row pushes the 6c drill-in", () => {
   const { tui } = fakeTui(30, 120);
   const app = new HelmApp(tui, theme, () => {});
+  app.handleInput("j");
   app.handleInput("j");
   app.handleInput("j"); // onto w-codemod
   app.handleInput("\r");
@@ -238,7 +245,8 @@ test("j/k selection is per-screen and clamps independently", () => {
 
   // Advance the HOME selection, then drill into the drill-in.
   app.handleInput("j");
-  app.handleInput("j"); // home selection = 2 (first workflow)
+  app.handleInput("j");
+  app.handleInput("j"); // home selection = 3 (first workflow)
   const homeMarker = markerLine();
   app.handleInput("\r"); // → drillin, its OWN selection starts at 0
   const drillStart = markerLine();
@@ -254,6 +262,7 @@ test("j/k selection is per-screen and clamps independently", () => {
 test("j clamps at the bottom of the drill-in worktree list", () => {
   const { tui } = fakeTui(30, 120);
   const app = new HelmApp(tui, theme, () => {});
+  app.handleInput("j");
   app.handleInput("j");
   app.handleInput("j");
   app.handleInput("\r"); // → drillin (4 worktrees)
@@ -298,6 +307,7 @@ test("a stored selection past a shrunk list clamps at read time (render + enter 
   };
   const { tui } = fakeTui(30, 120);
   const app = new HelmApp(tui, theme, () => {}, source);
+  app.handleInput("j");
   app.handleInput("j");
   app.handleInput("j");
   app.handleInput("\r"); // → drillin (4 worktrees)

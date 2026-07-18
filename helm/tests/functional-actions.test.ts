@@ -19,6 +19,7 @@ function type(app: HelmApp, value: string): void {
 function intoDrillIn(app: HelmApp): void {
   app.handleInput("j");
   app.handleInput("j");
+  app.handleInput("j");
   app.handleInput("\r");
 }
 
