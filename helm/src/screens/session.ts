@@ -26,13 +26,13 @@ const VERB_COL = 9;
 /** Left gutter (2 cells): a selection marker or blank, keeping rows aligned. */
 const GUTTER = 2;
 
-/** Header right-side verification receipts for the app chrome: `✓ build ✓ lint ✓ N tests`. */
+/** Header right-side verification receipts with independent build/lint verdicts and test totals. */
 export function renderReceipts(theme: ThemeLike, receipts: SessionReceipts): string {
-  const parts: string[] = [];
-  if (receipts.build) parts.push("✓ build");
-  if (receipts.lint) parts.push("✓ lint");
-  parts.push(`✓ ${receipts.tests} tests`);
-  return paint(theme, PALETTE.success, parts.join(" "));
+  return [
+    paint(theme, receipts.build ? PALETTE.success : PALETTE.error, `${receipts.build ? "✓" : "✕"} build`),
+    paint(theme, receipts.lint ? PALETTE.success : PALETTE.error, `${receipts.lint ? "✓" : "✕"} lint`),
+    paint(theme, PALETTE.success, `✓ ${receipts.tests} tests`),
+  ].join(" ");
 }
 
 export function renderSession(

@@ -163,8 +163,43 @@ function pathFromCall(entry: AgentHistoryEntry): string {
     ?? "unknown file";
 }
 
-function lineCount(value: string): number {
-  return value ? value.replace(/\n$/, "").split("\n").length : 0;
+function textLines(value: string): string[] {
+  return value ? value.replace(/\n$/, "").split("\n") : [];
+}
+
+function lineDiff(oldText: string, newText: string): { added: number; removed: number; lines: string[] } {
+  const oldLines = textLines(oldText);
+  const newLines = textLines(newText);
+  const lengths = Array.from({ length: oldLines.length + 1 }, () => new Array<number>(newLines.length + 1).fill(0));
+
+  for (let oldIndex = oldLines.length - 1; oldIndex >= 0; oldIndex -= 1) {
+    for (let newIndex = newLines.length - 1; newIndex >= 0; newIndex -= 1) {
+      lengths[oldIndex]![newIndex] = oldLines[oldIndex] === newLines[newIndex]
+        ? lengths[oldIndex + 1]![newIndex + 1]! + 1
+        : Math.max(lengths[oldIndex + 1]![newIndex]!, lengths[oldIndex]![newIndex + 1]!);
+    }
+  }
+
+  let oldIndex = 0;
+  let newIndex = 0;
+  let added = 0;
+  let removed = 0;
+  const lines: string[] = [];
+  while (oldIndex < oldLines.length || newIndex < newLines.length) {
+    if (oldIndex < oldLines.length && newIndex < newLines.length && oldLines[oldIndex] === newLines[newIndex]) {
+      oldIndex += 1;
+      newIndex += 1;
+    } else if (newIndex < newLines.length && (oldIndex >= oldLines.length || lengths[oldIndex]![newIndex + 1]! > lengths[oldIndex + 1]![newIndex]!)) {
+      added += 1;
+      lines.push(`${newIndex + 1} + ${newLines[newIndex]}`);
+      newIndex += 1;
+    } else {
+      removed += 1;
+      lines.push(`${oldIndex + 1} − ${oldLines[oldIndex]}`);
+      oldIndex += 1;
+    }
+  }
+  return { added, removed, lines };
 }
 
 function diffReceipt(entry: AgentHistoryEntry, result?: AgentHistoryEntry): DiffReceipt {
@@ -202,10 +237,10 @@ function diffReceipt(entry: AgentHistoryEntry, result?: AgentHistoryEntry): Diff
     }
   }
   if (!patch && (oldText !== undefined || newText !== undefined)) {
-    removed = lineCount(oldText ?? "");
-    added = lineCount(newText ?? "");
-    for (const [index, line] of (oldText ?? "").split("\n").entries()) if (line) diffLines.push(`${index + 1} − ${line}`);
-    for (const [index, line] of (newText ?? "").split("\n").entries()) if (line) diffLines.push(`${index + 1} + ${line}`);
+    const measured = lineDiff(oldText ?? "", newText ?? "");
+    removed = measured.removed;
+    added = measured.added;
+    diffLines.push(...measured.lines);
   }
   added = explicitAdded ?? added;
   removed = explicitRemoved ?? removed;

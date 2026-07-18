@@ -69,7 +69,8 @@ export function decodeKey(data: string): Key | null {
     }
   }
 
-  if (data.length === 1) {
+  const codePoints = Array.from(data);
+  if (codePoints.length === 1) {
     switch (data) {
       case "\r":
       case "\n":
@@ -90,9 +91,10 @@ export function decodeKey(data: string): Key | null {
         // (unarrived) arrow sequence. No timeout, no ambiguity.
         return { t: "esc" };
     }
-    const code = data.charCodeAt(0);
-    // Printable range (not DEL, which was handled above as backspace).
-    if (code >= 0x20 && code !== 0x7f) return { t: "char", ch: data };
+    const code = data.codePointAt(0)!;
+    const isControl = code < 0x20 || (code >= 0x7f && code <= 0x9f);
+    const isSurrogate = code >= 0xd800 && code <= 0xdfff;
+    if (!isControl && !isSurrogate) return { t: "char", ch: data };
     return null;
   }
 
