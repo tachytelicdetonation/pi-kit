@@ -5,7 +5,7 @@
  * context meter, truncation tiers) rather than imported: helm stays dependency-
  * free and owns its own footer render. The only structural difference between the
  * two variants is the middle meter and the money word:
- *   - "session": ctx meter (8-cell bar / text) + `$cost`
+ *   - "session": ctx meter (8-cell bar) + `$cost`
  *   - "fleet":   `burn NN k tok/min`           + `$NN.NN today`   (used by 6b)
  *
  * Truncation tiers (identical to 3a): <110 drop cwd · <90 drop the right-of-bar
@@ -15,6 +15,8 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { GLYPH, paint, PALETTE, type PaletteColor, type ThemeLike } from "./theme.js";
 import type { FooterProvider, HelmFooterModel } from "./state/types.js";
+
+export type { HelmFooterModel } from "./state/types.js";
 
 /** Fixed provider order (matches the stacked-bar spec and the palette). */
 const PROVIDER_ORDER = ["codex", "claude", "kimi"] as const;
@@ -52,20 +54,22 @@ export function renderHelmFooter(
 ): string {
   const w = safeWidth(width);
   if (w <= 0) return "";
-  if (w < 8) return truncateToWidth(paused ? "⏸" : "usage", w, "");
+  if (w < 8) {
+    const tiny = truncateToWidth(paused ? "⏸ paused" : "usage", w, "");
+    return paused ? paint(theme, PALETTE.warning, tiny) : tiny;
+  }
 
-  // ctrl+p PAUSE ALL: the footer turns yellow. A clear `⏸ paused` indicator leads
-  // at the far left in the warning tier; the whole line is width-clamped below, so
-  // the indicator never breaks the invariant. (Normal footers never use warning,
-  // so warning's presence cleanly signals the paused state.)
-  const pausedTag = paused ? `${paint(theme, PALETTE.warning, "⏸ paused")}${`  ${paint(theme, PALETTE.warning, SEPARATOR)}  `}` : "";
+  // ctrl+p PAUSE ALL: a clear `⏸ paused` indicator leads at the far left. The
+  // completed line is flattened and tinted once below so no normal nested colors
+  // remain on any visible character.
+  const pausedTag = paused ? `⏸ paused  ${SEPARATOR}  ` : "";
   const pausedTagWidth = visibleWidth(pausedTag);
 
   const showCwd = w >= 110;
   const showBranch = w >= 90;
   const barCells = w >= 90 ? PROVIDER_BAR_CELLS_FULL : PROVIDER_BAR_CELLS_COMPACT;
-  // Middle meter: bar at >=90, compact text at 70–89, gone below 70.
-  const meterMode: "bar" | "text" | "none" = w >= 90 ? "bar" : w >= 70 ? "text" : "none";
+  // The 8-cell ctx bar is retained through the 70–89 compact tier.
+  const showMeter = w >= 70;
   const showMoney = w >= 90;
   const showEffort = w >= 90;
 
@@ -76,7 +80,7 @@ export function renderHelmFooter(
   // branch name group takes only the leftover width so a long cwd never crowds
   // out the usage bar.
   const fixedGroups = [buildBarGroup(theme, model.providers, barCells)];
-  if (meterMode !== "none") fixedGroups.push(buildMeterGroup(theme, model, variant, meterMode === "bar"));
+  if (showMeter) fixedGroups.push(buildMeterGroup(theme, model, variant));
   const fixedLeft = fixedGroups.join(separator);
   const right = buildRightGroup(theme, model, variant, showMoney, showEffort);
 
@@ -98,7 +102,7 @@ export function renderHelmFooter(
 
   // Hard safety net: never exceed the available width, whatever the tier math did.
   if (visibleWidth(line) > w) line = truncateToWidth(line, w, "");
-  return line;
+  return paused ? paint(theme, PALETTE.warning, stripAnsi(line)) : line;
 }
 
 /** cwd (budgeted to the leftover width, dropped if too little) then branch. */
@@ -134,16 +138,14 @@ function buildMeterGroup(
   theme: ThemeLike,
   model: HelmFooterModel,
   variant: FooterVariant,
-  withBar: boolean,
 ): string {
   if (variant === "fleet") return buildBurnGroup(theme, model.burnRatePerMin);
-  return buildCtxGroup(theme, model.ctxPercent, withBar);
+  return buildCtxGroup(theme, model.ctxPercent);
 }
 
-function buildCtxGroup(theme: ThemeLike, percent: number | undefined, withBar: boolean): string {
+function buildCtxGroup(theme: ThemeLike, percent: number | undefined): string {
   if (percent === undefined) return paint(theme, PALETTE.dim, "ctx --");
   const rounded = Math.round(clampPercent(percent));
-  if (!withBar) return paint(theme, PALETTE.dim, `ctx ${rounded}%`);
   const { filled, empty } = computeCtxMeter(percent);
   const bar = paint(theme, PALETTE.mid, GLYPH.bar.repeat(filled)) + paint(theme, PALETTE.spent, GLYPH.bar.repeat(empty));
   return `${paint(theme, PALETTE.dim, "ctx")} ${bar} ${paint(theme, PALETTE.dim, `${rounded}%`)}`;
@@ -222,4 +224,9 @@ function formatSpendToday(spend: number | undefined): string {
 function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(100, Math.max(0, value));
+}
+
+/** Remove renderer-owned SGR sequences before applying the single paused tint. */
+function stripAnsi(value: string): string {
+  return value.replace(/\x1b\[[0-9;]*m/g, "");
 }

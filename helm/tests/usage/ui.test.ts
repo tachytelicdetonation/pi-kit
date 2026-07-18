@@ -70,8 +70,8 @@ test("ctx meter fills round(percent/100 * 8) cells", () => {
   assert.deepEqual(computeCtxMeter(0), { filled: 0, empty: 8 });
   assert.deepEqual(computeCtxMeter(100), { filled: 8, empty: 0 });
 
-  const textTier = stripAnsi(renderFooter(footer, plainTheme, 80)[0]);
-  assert.match(textTier, /ctx 60%/);
+  const compactTier = stripAnsi(renderFooter(footer, plainTheme, 80)[0]);
+  assert.match(compactTier, /ctx ▮{8} 60%/);
   const undefinedCtx = stripAnsi(renderFooter({ ...footer, ctxPercent: undefined }, plainTheme, 140)[0]);
   assert.match(undefinedCtx, /ctx --/);
 });

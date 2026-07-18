@@ -81,7 +81,7 @@ export function renderFooter(model: FooterViewModel, theme: ThemeLike, width: nu
   const showCwd = safeWidth >= 110;
   const showBranch = safeWidth >= 90;
   const barCells = safeWidth >= 90 ? PROVIDER_BAR_CELLS_FULL : PROVIDER_BAR_CELLS_COMPACT;
-  const ctxMode: "bar" | "text" | "none" = safeWidth >= 90 ? "bar" : safeWidth >= 70 ? "text" : "none";
+  const showCtx = safeWidth >= 70;
   const showCost = safeWidth >= 90;
   const showEffort = safeWidth >= 90;
 
@@ -92,7 +92,7 @@ export function renderFooter(model: FooterViewModel, theme: ThemeLike, width: nu
   // name group only gets the width left over, so a long cwd never crowds out the
   // usage bar (the footer's whole point) via the right-side safety-net truncation.
   const fixedGroups = [buildBarGroup(theme, model.providers, barCells)];
-  if (ctxMode !== "none") fixedGroups.push(buildCtxGroup(theme, model.ctxPercent, ctxMode === "bar"));
+  if (showCtx) fixedGroups.push(buildCtxGroup(theme, model.ctxPercent));
   const fixedLeft = fixedGroups.join(separator);
   const right = buildRightGroup(theme, model, showCost, showEffort);
 
@@ -146,10 +146,9 @@ function buildBarGroup(theme: ThemeLike, states: ProviderViewState[], cells: num
   return `${chunks.join("")} ${paint(theme, PALETTE.dim, label)}`;
 }
 
-function buildCtxGroup(theme: ThemeLike, percent: number | undefined, withBar: boolean): string {
+function buildCtxGroup(theme: ThemeLike, percent: number | undefined): string {
   if (percent === undefined) return paint(theme, PALETTE.dim, "ctx --");
   const rounded = Math.round(clampPercent(percent));
-  if (!withBar) return paint(theme, PALETTE.dim, `ctx ${rounded}%`);
   const { filled, empty } = computeCtxMeter(percent);
   const bar = paint(theme, PALETTE.mid, BAR_GLYPH.repeat(filled)) + paint(theme, PALETTE.empty, BAR_GLYPH.repeat(empty));
   return `${paint(theme, PALETTE.dim, "ctx")} ${bar} ${paint(theme, PALETTE.dim, `${rounded}%`)}`;
