@@ -1,1 +1,0 @@
-{"version":3,"file":"expand.js","sourceRoot":"","sources":["../src/expand.ts"],"names":[],"mappings":";;AAMA,4CAGC;AATD,2CAAgD;AAKhD,oEAAoE;AACpE,SAAgB,gBAAgB,CAAC,GAAkB,EAAE,UAAkB;IACtE,IAAI,GAAG,CAAC,QAAQ;QAAE,OAAO,UAAU,CAAC;IACpC,OAAO,IAAI,CAAC,GAAG,CAAC,UAAU,EAAE,6BAAiB,CAAC,CAAC;AAChD,CAAC"}

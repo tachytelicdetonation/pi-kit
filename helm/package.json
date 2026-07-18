@@ -1,0 +1,38 @@
+{
+  "name": "pi-helm",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Helm — mission-control TUI + dynamic workflows, Claude-cmux fleets, usage health, and Codex search for the Pi coding agent",
+  "type": "module",
+  "keywords": ["pi-package", "pi", "helm", "mission-control", "tui", "workflows", "cmux", "usage", "web-search"],
+  "pi": { "extensions": ["./extensions/helm.ts"] },
+  "files": ["extensions/", "src/", "dist/", "README.md"],
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "npm run check && npm run build && tsx --test \"tests/**/*.test.ts\"",
+    "preview": "tsx scripts/preview.ts",
+    "test:compat": "tsx scripts/run-compat-tests.ts"
+  },
+  "dependencies": {
+    "acorn": "^8.16.0",
+    "proper-lockfile": "^4.1.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.80.10",
+    "@earendil-works/pi-coding-agent": "0.80.10",
+    "@earendil-works/pi-tui": "0.80.10",
+    "@types/node": "^24.0.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "fast-check": "^4.8.0",
+    "tsx": "^4.20.0",
+    "typebox": "^1.0.55",
+    "typescript": "^5.9.0"
+  }
+}
