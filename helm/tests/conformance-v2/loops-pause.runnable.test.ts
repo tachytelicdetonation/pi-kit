@@ -64,7 +64,10 @@ test("Loops row: failed trial persists no trialPassed gate and is invoked only o
     const source = new RealDataSource({
       ...base.deps,
       repository: undefined,
-      trialLoop: async () => { invocations += 1; return { ok: false }; },
+      workflows: {
+        ...base.deps.workflows,
+        trialLoop: async () => { invocations += 1; return { passed: false, evidence: [], ok: false }; },
+      },
     });
     const created = await source.execute({ type: "loop.createDraft", prompt: "every hour inspect CI", draftId: "loop-no-retry" });
     const verdict = await source.trialLoop(created.id!);

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TuiLike } from "../../src/app.js";
-import type { UsagePort, WorkflowPort } from "../../src/data/ports.js";
+import type { UsageAccountingSnapshot, UsagePort, WorkflowGoalMetrics, WorkflowPort } from "../../src/data/ports.js";
 import { RealDataSource, type RealDataSourceDeps } from "../../src/data/real.js";
 import { createHelmRepository } from "../../src/state/persistence.js";
 import type {
@@ -10,8 +10,11 @@ import type {
   DigestData,
   HelmState,
   IntakeDraft,
+  IntakeQuestion,
+  LoopDefinition,
   LoopDraft,
   Session,
+  TrialVerdict,
   UsageDetail,
   Workflow,
   WorkflowDetail,
@@ -41,7 +44,7 @@ export interface WorkflowSpies {
   pauseAll: number;
   resumeAll: number;
   trials: string[];
-  loopRuns: LoopDraft[];
+  loopRuns: LoopDefinition[];
 }
 
 export interface SourceOptions {
@@ -51,7 +54,7 @@ export interface SourceOptions {
   sessions?: Map<string, Session>;
   usage?: UsageDetail;
   footer?: HelmState["footer"];
-  trialResult?: { ok: boolean };
+  trialResult?: Partial<TrialVerdict> & { ok: boolean };
   shouldShowDigest?: boolean;
   repository?: boolean;
   deps?: Partial<RealDataSourceDeps>;
@@ -134,37 +137,110 @@ function placeholderCloseout(goalId: string): Closeout {
   };
 }
 
+function parseMoney(value: string | undefined): number {
+  const match = value?.match(/\$\s*([\d,.]+)/);
+  const parsed = Number(match?.[1]?.replaceAll(",", "") ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function accountingSnapshot(usage: UsageDetail | undefined): UsageAccountingSnapshot {
+  if (!usage) return { spentUsd: 0, providerRemaining: {}, records: [] };
+  return {
+    spentUsd: parseMoney(usage.spendWeek),
+    providerRemaining: Object.fromEntries(usage.providers.map(({ id, remaining }) => [id, remaining])),
+    records: usage.perGoal.map((goal, index) => ({
+      goalName: goal.name,
+      costUsd: parseMoney(goal.cost),
+      at: index,
+      contributor: goal.name,
+    })),
+  };
+}
+
+function deterministicPlan(prompt: string, answers: IntakeQuestion[]) {
+  const answered = answers.filter((question) => question.answer?.trim());
+  const detail = answered.at(-1)?.answer?.trim() || prompt.trim();
+  const vague = !detail || /^(improve|fix|build|make|update)(?:\s+(?:it|this|that))?[.!]?$/i.test(detail);
+  const questions = vague
+    ? [{ id: "outcome", question: "What measurable outcome and scope should this goal achieve?" }]
+    : answers.map((question) => ({ ...question }));
+  const words = detail.split(/\s+/).filter(Boolean);
+  const planName = words.slice(0, 3).join("-").toLowerCase().replace(/[^a-z0-9-]+/g, "-") || "execute";
+  return {
+    questions,
+    plan: [{ name: planName, description: `Implement and verify: ${detail || "clarify the requested outcome"}` }],
+    estWall: words.length > 12 ? "2-4h" : "1-2h",
+    estCost: words.length > 12 ? "~$12" : "~$8",
+    escalationRule: `Escalate decisions outside: ${detail || "the clarified scope"}`,
+  };
+}
+
 export function makePersistentSource(root: string, options: SourceOptions = {}) {
   const statePath = join(root, ".helm-test", "state.json");
   const spies: WorkflowSpies = {
     started: [], paused: [], resumed: [], pauseAll: 0, resumeAll: 0, trials: [], loopRuns: [],
   };
+  const pausedWorkflows = new Set((options.workflows ?? []).filter((workflow) => workflow.state === "paused").map((workflow) => workflow.id));
+  const pausedWorktrees = new Set<string>();
+  const zeroGoalMetrics: WorkflowGoalMetrics = {
+    unitsDone: 0,
+    unitsTotal: 0,
+    unit: "work units",
+    added: 0,
+    removed: 0,
+    commits: 0,
+    verificationPassed: 0,
+    verificationTotal: 1,
+    costUsd: 0,
+    interventions: 0,
+  };
   const workflowPort: WorkflowPort = {
     listWorkflows: () => options.workflows ?? [],
     getDrillIn: (id) => options.details?.get(id),
     getSession: (id) => options.sessions?.get(id),
-    pauseWorkflow: (id) => { spies.paused.push(id); },
-    resumeWorkflow: async (id) => { spies.resumed.push(id); return true; },
-    pauseAll: () => { spies.pauseAll += 1; },
-    resumeAll: () => { spies.resumeAll += 1; },
+    pauseWorkflow: (id) => { spies.paused.push(id); pausedWorkflows.add(id); },
+    resumeWorkflow: async (id) => { spies.resumed.push(id); pausedWorkflows.delete(id); return true; },
+    pauseWorktree: (id) => { pausedWorktrees.add(id); return true; },
+    resumeWorktree: (id) => pausedWorktrees.delete(id),
+    isWorktreePaused: (id) => pausedWorktrees.has(id),
+    pauseAll: () => {
+      spies.pauseAll += 1;
+      const transitioned = (options.workflows ?? []).filter((workflow) => !pausedWorkflows.has(workflow.id)).map((workflow) => workflow.id);
+      for (const id of transitioned) pausedWorkflows.add(id);
+      return transitioned;
+    },
+    resumeAll: (runIds) => {
+      spies.resumeAll += 1;
+      for (const id of runIds) pausedWorkflows.delete(id);
+    },
+    planGoal: async ({ prompt, answers }) => deterministicPlan(prompt, answers),
     startGoal: async (input) => {
       spies.started.push({ goalId: input.goalId, prompt: input.prompt });
       return input.plan.map((_, index) => `run-${index + 1}`);
     },
     trialLoop: async (loop) => {
       spies.trials.push(loop.id);
-      return { ok: options.trialResult?.ok ?? true, runId: `trial-${loop.id}` };
+      const passed = options.trialResult?.passed ?? options.trialResult?.ok ?? true;
+      return {
+        passed,
+        evidence: options.trialResult?.evidence ?? [passed ? "supervised trial passed" : "supervised trial failed"],
+        ok: passed,
+        runId: options.trialResult?.runId ?? `trial-${loop.id}`,
+      };
     },
     runLoop: async (loop) => {
       spies.loopRuns.push(structuredClone(loop));
       return { ok: true, runId: `run-${loop.id}` };
     },
     getGoalProgress: () => undefined,
+    getGoalMetrics: () => zeroGoalMetrics,
+    listUsageCostRecords: () => accountingSnapshot(options.usage).records,
     subscribe: () => () => {},
   };
   const usagePort: UsagePort = {
     getFooter: () => options.footer ?? options.state?.footer ?? { cwd: root, providers: [] },
     getUsageDetail: () => options.usage ?? { providers: [], spendToday: "$0.00", spendWeek: "$0.00", perGoal: [] },
+    getAccountingSnapshot: () => accountingSnapshot(options.usage),
     subscribe: () => () => {},
   };
   const repository = options.repository === false
@@ -185,7 +261,6 @@ export function makePersistentSource(root: string, options: SourceOptions = {}) 
     workflows: workflowPort,
     usage: usagePort,
     nativeState: emptyState(root, options.state),
-    trialLoop: async () => options.trialResult ?? { ok: true },
     synthDigest: emptyDigest,
     synthIntake: placeholderIntake,
     synthLoopDraft: placeholderLoop,

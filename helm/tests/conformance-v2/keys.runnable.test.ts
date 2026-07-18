@@ -117,8 +117,9 @@ test("Keys row: p with no selectable home row is a strict no-op", () => {
 class DeferredTrialSource extends MockDataSource {
   resolveTrial!: (value: { ok: boolean }) => void;
 
-  override trialLoop(): Promise<{ ok: boolean }> {
-    return new Promise((resolve) => { this.resolveTrial = resolve; });
+  override trialLoop(): Promise<{ passed: boolean; evidence: string[]; ok: boolean }> {
+    return new Promise<{ ok: boolean }>((resolve) => { this.resolveTrial = resolve; })
+      .then(({ ok }) => ({ passed: ok, evidence: [], ok }));
   }
 }
 

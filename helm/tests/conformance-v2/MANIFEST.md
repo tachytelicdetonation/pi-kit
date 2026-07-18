@@ -1,6 +1,7 @@
 # Helm design conformance v2 manifest
 
-- Manifest version: 1
+- Manifest version: 2
+- v2: fixture plumbing conformed to merged port surfaces; assertions unchanged except sanctioned trialLoop injection rewire.
 - Base commit: `7998b65d4ceeaf6891278987252a47212af07cc5`
 - Test commit SHA: recorded in .fable-loop planfile at commit time (single squashed commit on fable/tests)
 - Scope: new files only under `helm/tests/conformance-v2/`
