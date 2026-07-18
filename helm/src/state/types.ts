@@ -75,6 +75,16 @@ export interface Loop {
   lastFiredAtMs?: number;
 }
 
+export interface LoopRun {
+  id: string;
+  loopId: string;
+  timestamp: string; // ISO
+  outcome: "success" | "failure" | "trial";
+  summary: string;
+  yieldNote?: string;
+  cost?: string;
+}
+
 /** One numbered option on a 7b escalation card. Exactly one is `recommended`. */
 export interface EscalationOption {
   text: string;

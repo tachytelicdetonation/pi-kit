@@ -36,6 +36,7 @@ import { renderDrillIn, renderDrillInCounts } from "./screens/drill-in.js";
 import { renderEscalation } from "./screens/escalation.js";
 import { renderIntake } from "./screens/intake.js";
 import { renderLoopBuilder } from "./screens/loop-builder.js";
+import { renderLoopDrillIn, renderLoopDrillInHeader } from "./screens/loop-drill-in.js";
 import { renderMissionControl } from "./screens/mission-control.js";
 import { overlayPopover, usagePopoverLines } from "./screens/popover.js";
 import { renderSearch } from "./screens/search.js";
@@ -188,6 +189,8 @@ export class HelmApp implements Component {
     switch (top.id) {
       case "drillin":
         return `drillin:${top.workflowId}`;
+      case "loopDrillin":
+        return `loopDrillin:${top.loopId}`;
       case "session":
         return `session:${top.worktreeId}`;
       case "intake":
@@ -237,6 +240,8 @@ export class HelmApp implements Component {
         return selectableCount(state);
       case "drillin":
         return this.dataSource.getDrillIn(top.workflowId)?.worktrees.length ?? 0;
+      case "loopDrillin":
+        return this.dataSource.listLoopRuns(top.loopId).length;
       case "session":
         return this.dataSource.getSession(top.worktreeId)?.lines.length ?? 0;
       case "intake":
@@ -259,6 +264,10 @@ export class HelmApp implements Component {
         return "mission control";
       case "drillin":
         return this.dataSource.getDrillIn(top.workflowId)?.label ?? "workflow";
+      case "loopDrillin": {
+        const loop = this.dataSource.snapshot().loops.find((item) => item.id === top.loopId);
+        return loop ? `loop › ${loop.name}` : "loop";
+      }
       case "session": {
         const session = this.dataSource.getSession(top.worktreeId);
         return session ? `task: ${session.task}` : "session";
@@ -295,6 +304,11 @@ export class HelmApp implements Component {
       case "drillin": {
         const detail = this.dataSource.getDrillIn(top.workflowId);
         return detail ? renderDrillInCounts(this.theme, detail) : "";
+      }
+      case "loopDrillin": {
+        const loop = state.loops.find((item) => item.id === top.loopId);
+        if (!loop) return "";
+        return renderLoopDrillInHeader(this.theme, loop, this.dataSource.listLoopRuns(top.loopId));
       }
       case "session": {
         const session = this.dataSource.getSession(top.worktreeId);
@@ -346,6 +360,11 @@ export class HelmApp implements Component {
         const detail = this.dataSource.getDrillIn(top.workflowId);
         if (!detail) return [];
         return renderDrillIn({ ...detail, sessionModel: state.footer.model }, this.theme, width, height, this.getSelection(top));
+      }
+      case "loopDrillin": {
+        const loop = state.loops.find((item) => item.id === top.loopId);
+        if (!loop) return [];
+        return renderLoopDrillIn(loop, this.dataSource.listLoopRuns(top.loopId), this.theme, width, height, this.getSelection(top));
       }
       case "session": {
         const session = this.dataSource.getSession(top.worktreeId);
@@ -485,6 +504,8 @@ export class HelmApp implements Component {
         return `enter drill · j/k move · p pause · n new goal · N new loop · ${global}`;
       case "drillin":
         return `enter session · j/k move · p pause · r reassign · t test-race · ${global}`;
+      case "loopDrillin":
+        return `enter edit loop · j/k move · p pause · esc back · ${global}`;
       case "session":
         return `o expand · d diff · m merge · i interrupt & steer · esc back · ${global}`;
       case "intake":
@@ -798,7 +819,7 @@ export class HelmApp implements Component {
       // Goal rows route by lifecycle; the remaining rows retain their direct cards.
       if (row?.kind === "workflow") this.push({ id: "drillin", workflowId: row.id });
       else if (row?.kind === "escalation") this.push({ id: "escalation", escalationId: row.id });
-      else if (row?.kind === "loop") this.push({ id: "loopBuilder", loopId: row.id });
+      else if (row?.kind === "loop") this.push({ id: "loopDrillin", loopId: row.id });
       else if (row?.kind === "goal") {
         const state = this.dataSource.snapshot();
         const goal = state.goals.find((item) => item.id === row.id);
@@ -814,6 +835,12 @@ export class HelmApp implements Component {
       const detail = this.dataSource.getDrillIn(top.workflowId);
       const worktree = detail?.worktrees[this.getSelection(top)];
       if (worktree) this.push({ id: "session", worktreeId: worktree.id });
+      return;
+    }
+    if (top.id === "loopDrillin") {
+      if (this.dataSource.getLoopDraft(top.loopId)) {
+        this.push({ id: "loopBuilder", loopId: top.loopId });
+      }
       return;
     }
     if (top.id === "escalation") {
@@ -1166,6 +1193,8 @@ export class HelmApp implements Component {
         case "t":
           return this.runCommand({ type: "worktree.testDetails", workflowId: top.workflowId, worktreeId: worktree.id });
       }
+    } else if (top.id === "loopDrillin") {
+      if (ch === "p") return this.runCommand({ type: "loop.togglePause", loopId: top.loopId });
     } else if (top.id === "session") {
       switch (ch) {
         case "o":

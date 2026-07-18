@@ -12,6 +12,7 @@ import type {
   HelmState,
   IntakeDraft,
   LoopDraft,
+  LoopRun,
   Precedent,
   Session,
   TrialVerdict,
@@ -87,6 +88,8 @@ export interface DataSource {
    * is unknown so the caller can decline to descend rather than dead-end.
    */
   getDrillIn(workflowId: string): WorkflowDetail | undefined;
+  /** Durable run history for one scheduled loop, newest first. */
+  listLoopRuns(loopId: string): LoopRun[];
   /** The 4a session transcript for a worktree (Phase 3). `undefined` when unknown. */
   getSession(worktreeId: string): Session | undefined;
 

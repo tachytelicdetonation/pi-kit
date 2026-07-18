@@ -126,13 +126,15 @@ test("`x` confirms before discarding the builder", async () => {
   assert.match(stripAnsi(app.render(120)[0]), /mission control/, "x pops back to home");
 });
 
-test("a home LOOP row opens its 7a builder via enter", () => {
+test("a home LOOP row opens its drill-in, then enter opens its 7a builder", () => {
   const app = new HelmApp(fakeTui(40, 120), theme, () => {});
   // Selectable order: 2 escalations, then 2 goals with 4 workflows, then 3 loops.
   // Step to the first loop row (index 8) and descend.
   for (let i = 0; i < 8; i++) app.handleInput("j");
   app.handleInput("\r");
-  assert.match(stripAnsi(app.render(120)[0]), /new loop/, "enter on a loop row opens the builder");
+  assert.match(stripAnsi(app.render(120)[0]), /loop › gh-issues/, "enter on a loop row opens the drill-in");
+  app.handleInput("\r");
+  assert.match(stripAnsi(app.render(120)[0]), /new loop/, "enter on the drill-in opens the builder");
 });
 
 test("trialState renders default 'idle' when no explicit state is passed", () => {

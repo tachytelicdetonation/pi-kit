@@ -46,11 +46,12 @@ printable focuses the prompt and types to pi):
 - `?` — a brief per-screen key-help hint on the prompt line
 - `ctrl+q` — quit (`q` types to the prompt like any other printable)
 
-**Per-screen:** 6b `enter p n N` (`n` new goal → 6a, `N` new loop → 7a) · 6c `enter p r t` ·
+**Per-screen:** 6b `enter p n N` (`n` new goal → 6a, `N` new loop → 7a) · loop drill-in `enter p` · 6c `enter p r t` ·
 4a `d m i o` · 6a `g` go / `e` edit plan / `x` discard · 7a `t` trial, then `s`/`r`/`x` ·
 7b `1-9 ? [ ] enter` · 7c `d enter l` · 7d `a` apply precedents / `r` full report / `x` archive.
 
-**Navigation choices worth noting:** a home **loop row** opens its 7a builder; a
+**Navigation choices worth noting:** a home **loop row** opens its loop drill-in
+(run history + guardrails), then `enter` opens its 7a builder; a
 **complete/archived goal** is reached through `/` search (home lists only running
 goals) → its 7d closeout; `n`/`N` push fresh intake / loop-builder drafts.
 
