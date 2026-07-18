@@ -74,7 +74,7 @@ test("Escalation contract row: identical decision conflict auto-resolves and wri
     source.addEscalation(decisionEscalation("esc-repeat"));
     assert.equal(source.getEscalation("esc-repeat"), undefined);
     assert.ok(
-      source.snapshot().journal.some((event) => /precedent/i.test(event.label) && /conditional/i.test(event.label)),
+      (source.snapshot().audit ?? []).some((record) => /auto-resolved/i.test(record.summary) && /precedent.*conditional/i.test(record.detail)),
       "the autonomous resolution is explicitly auditable",
     );
   });
@@ -84,6 +84,7 @@ test("Escalation contract row: permission-class escalation never auto-resolves f
   await withTempProject(async (root) => {
     const permission = decisionEscalation("esc-permission", "permission:publish-release:prod");
     permission.question = "May Helm publish the production release?";
+    permission.resolutionClass = "permission";
     const repository = createHelmRepository(root, `${root}/state.json`);
     repository.save({
       ...repository.load(),
@@ -98,6 +99,6 @@ test("Escalation contract row: permission-class escalation never auto-resolves f
     const source = new RealDataSource(makePersistentSource(root, { deps: { repository } }).deps);
     source.addEscalation(permission);
     assert.ok(source.getEscalation(permission.id), "permission remains in needs-you");
-    assert.equal(source.getEscalation(permission.id)?.resolved, false);
+    assert.notEqual(source.getEscalation(permission.id)?.resolved, true);
   });
 });

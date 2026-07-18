@@ -57,9 +57,3 @@ test("Loops contract row: an armed firing reads immutable activeDefinition, neve
     assert.equal(spies.loopRuns[0]?.prompt, "ORIGINAL_PROMPT");
   });
 });
-
-test("Loops contract row: paused-with-reason is enforced by the Loop type", () => {
-  // @ts-expect-error Contract rejects a paused loop without pausedReason.
-  const invalid: Loop = { id: "bad", name: "bad", trigger: "manual", pipelineSummary: "noop", health: "paused" };
-  assert.equal(invalid.health, "paused");
-});

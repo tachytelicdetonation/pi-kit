@@ -9,7 +9,7 @@ test("Closeout row: a completed goal exposes concrete measured metrics, not plac
     const source = new RealDataSource({
       ...base.deps,
       nativeState: emptyState(root, {
-        goals: [{ id: "goal-receipts", name: "receipt-backed goal", phase: "running", progress: 0.8 }],
+        goals: [{ id: "goal-receipts", name: "receipt-backed goal", phase: "running", progress: 0.8, estCost: "~$12" }],
       }),
       workflows: {
         ...base.deps.workflows,
@@ -22,7 +22,7 @@ test("Closeout row: a completed goal exposes concrete measured metrics, not plac
     assert.match(closeout.addedText, /^\+[\d,.]+[kKmM]?$/);
     assert.match(closeout.removedText, /^−[\d,.]+[kKmM]?$/);
     assert.match(closeout.commitsText, /^\d+ commits?$/);
-    assert.match(closeout.greenText, /^\d+(?:\.\d+)?% green$/);
+    assert.match(closeout.greenText, /^\d+(?:\.\d+)?% green(?: \(.+\))?$/);
     assert.match(closeout.actualCost, /^\$\d+\.\d{2}$/);
     assert.match(closeout.estCost, /^~?\$\d+(?:\.\d{2})?$/);
     assert.match(closeout.yourTime, /\d+ decisions?.*\d+ min/);

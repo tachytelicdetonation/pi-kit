@@ -1,6 +1,7 @@
-# Helm design conformance v2 manifest
+# Helm design conformance v3 manifest
 
-- Manifest version: 2
+- Manifest version: 3
+- v3: five adjudicated assertion corrections (metrics regex breadth, digest label ownership, audit surface, permission resolutionClass fixture, type-level overreach removal).
 - v2: fixture plumbing conformed to merged port surfaces; assertions unchanged except sanctioned trialLoop injection rewire.
 - Base commit: `7998b65d4ceeaf6891278987252a47212af07cc5`
 - Test commit SHA: recorded in .fable-loop planfile at commit time (single squashed commit on fable/tests)
