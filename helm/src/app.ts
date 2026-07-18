@@ -41,7 +41,7 @@ import { overlayPopover, usagePopoverLines } from "./screens/popover.js";
 import { renderSearch } from "./screens/search.js";
 import { renderReceipts, renderSession } from "./screens/session.js";
 import { activeLoopCount, needsYouCount, nextNeedsYouId, selectableCount, selectableRows, workflowsForGoal } from "./state/selectors.js";
-import type { Closeout, HelmState, TrialState } from "./state/types.js";
+import type { Closeout, HelmState, Precedent, TrialState } from "./state/types.js";
 import { GLYPH, paint, PALETTE, type ThemeLike } from "./theme.js";
 
 /**
@@ -96,6 +96,8 @@ export class HelmApp implements Component {
   private readonly applied = new Set<string>();
   /** Per-closeout precedent ids currently declined by the operator. */
   private readonly declined = new Map<string, Set<string>>();
+  /** Stable numbered rows for the open card; durable declines disappear from getCloseout(). */
+  private readonly closeoutPrecedents = new Map<string, Precedent[]>();
   /** Last-seen needs-you count — drives the bell-on-new-escalation heuristic. */
   private prevEscalationCount: number;
   private readonly dataSource: DataSource;
@@ -398,17 +400,27 @@ export class HelmApp implements Component {
 
   /** Add dim + strikethrough SGR styling without changing the closeout renderer's public surface. */
   private closeoutForRender(top: Screen & { id: "closeout" }, closeout: Closeout): Closeout {
-    const declined = this.declined.get(this.screenKey(top));
-    if (!declined?.size) return closeout;
+    const key = this.screenKey(top);
+    const precedents = this.rememberCloseoutPrecedents(key, closeout.proposedPrecedents);
+    const declined = this.declined.get(key);
+    if (!declined?.size) return { ...closeout, proposedPrecedents: precedents };
     const strike = (text: string) => `\x1b[2;9m${text}\x1b[22;29m`;
     return {
       ...closeout,
-      proposedPrecedents: closeout.proposedPrecedents.map((precedent) =>
+      proposedPrecedents: precedents.map((precedent) =>
         declined.has(precedent.id)
           ? { ...precedent, question: strike(precedent.question), decision: strike(precedent.decision) }
           : precedent,
       ),
     };
+  }
+
+  private rememberCloseoutPrecedents(key: string, current: readonly Precedent[]): Precedent[] {
+    const remembered = this.closeoutPrecedents.get(key) ?? [];
+    const seen = new Set(remembered.map((precedent) => precedent.id));
+    const merged = [...remembered, ...current.filter((precedent) => !seen.has(precedent.id))];
+    this.closeoutPrecedents.set(key, merged);
+    return merged;
   }
 
   /** The below-body region: the input box for a session, else a single prompt line. */
@@ -985,21 +997,22 @@ export class HelmApp implements Component {
 
   /** 7d `1-9`: toggle the numbered proposal between accepted and declined. */
   private toggleCloseoutPrecedent(top: Screen & { id: "closeout" }, index: number): void {
-    const precedent = this.dataSource.getCloseout(top.goalId)?.proposedPrecedents[index];
-    if (!precedent) return;
     const key = this.screenKey(top);
+    const current = this.dataSource.getCloseout(top.goalId)?.proposedPrecedents ?? [];
+    const precedent = this.rememberCloseoutPrecedents(key, current)[index];
+    if (!precedent) return;
     const declined = this.declined.get(key) ?? new Set<string>();
-    if (declined.has(precedent.id)) declined.delete(precedent.id);
-    else declined.add(precedent.id);
+    const isDeclined = !declined.has(precedent.id);
+    if (isDeclined) declined.add(precedent.id);
+    else declined.delete(precedent.id);
     this.declined.set(key, declined);
+    this.dataSource.setPrecedentDeclined?.(precedent, isDeclined);
     this.tui.requestRender();
   }
 
   /** 7d `a`: confirm, then hand the repository guidance edit to Pi. */
   private applyPrecedents(top: Screen & { id: "closeout" }): void {
     this.confirm("apply these precedents to repository guidance", () => {
-      const source = this.dataSource as DataSource & { declinePrecedent?: (id: string) => void };
-      for (const id of this.declined.get(this.screenKey(top)) ?? []) source.declinePrecedent?.(id);
       this.applied.add(this.screenKey(top));
       this.runCommand({ type: "goal.applyPrecedents", goalId: top.goalId });
     });

@@ -9,6 +9,7 @@
  * clearly-labelled "phase 2" error rather than silently no-op.
  */
 import { HelmStore } from "./../state/store.js";
+import { canonicalProposedPrecedents } from "./../state/precedents.js";
 import type {
   Closeout,
   DigestData,
@@ -584,6 +585,10 @@ export class MockDataSource implements DataSource {
     this.store.declinePrecedent(id);
   }
 
+  setPrecedentDeclined(precedent: Precedent, declined: boolean): void {
+    this.store.setPrecedentDeclined(precedent, declined);
+  }
+
   answerEscalationFollowUp(escalationId: string, questionAt: number, answer: string): void {
     const escalation = this.getEscalation(escalationId);
     if (!escalation) return;
@@ -627,16 +632,8 @@ export class MockDataSource implements DataSource {
     if (!goalId) return undefined;
     const seed = seedCloseout(goalId);
     // Merge the precedents recorded via decide (the SAME store as 7b) with the
-    // proposed ones, then drop DECLINED precedents so they are never re-proposed.
-    const live = this.store.getState().precedents;
-    const merged = [...seed.proposedPrecedents, ...live];
-    const seen = new Set<string>();
-    const proposedPrecedents: Precedent[] = [];
-    for (const precedent of merged) {
-      if (precedent.declined || seen.has(precedent.id)) continue;
-      seen.add(precedent.id);
-      proposedPrecedents.push(precedent);
-    }
+    // proposed ones, then drop declined/applied records so they are not re-proposed.
+    const proposedPrecedents = canonicalProposedPrecedents(seed.proposedPrecedents, this.store.getState().precedents);
     return { ...seed, proposedPrecedents };
   }
 
@@ -732,6 +729,7 @@ export class MockDataSource implements DataSource {
         this.archiveGoal(command.goalId);
         return { ok: true };
       case "goal.applyPrecedents":
+        for (const precedent of this.getCloseout(command.goalId)?.proposedPrecedents ?? []) this.store.applyPrecedent(precedent);
         return { ok: true, agentPrompt: `Apply precedents for ${command.goalId}` };
       case "goal.report":
         return { ok: true, document: { title: "goal report", lines: ["mock report"] } };
