@@ -294,6 +294,7 @@ test("a stored selection past a shrunk list clamps at read time (render + enter 
     archiveGoal: (id: string) => base.archiveGoal(id),
     trialLoop: (id: string) => base.trialLoop(id),
     search: (query: string) => base.search(query),
+    execute: (command) => base.execute(command),
   };
   const { tui } = fakeTui(30, 120);
   const app = new HelmApp(tui, theme, () => {}, source);

@@ -19,7 +19,7 @@ import { windowLines, wrapPlain } from "./../chrome.js";
 import { paint, PALETTE } from "./../theme.js";
 /** Left gutter (2 cells) so the card body aligns with the other screens. */
 const INDENT = "  ";
-export function renderEscalation(escalation, theme, width, height, view = {}) {
+export function renderEscalation(escalation, theme, width, height) {
     const w = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
     const h = Number.isFinite(height) ? Math.max(0, Math.floor(height)) : 0;
     if (w <= 0 || h <= 0)
@@ -68,12 +68,6 @@ export function renderEscalation(escalation, theme, width, height, view = {}) {
             `${paint(theme, PALETTE.mid, `"${escalation.precedentPhrase}"`)}` +
             `${paint(theme, PALETTE.dim, " is remembered")}`;
         lines.push(indent(theme, remind, w));
-    }
-    // ── Follow-up stub (marked no-op) ─────────────────────────────────────────
-    const followUps = view.followUps ?? 0;
-    if (followUps > 0) {
-        const noun = followUps === 1 ? "follow-up" : "follow-ups";
-        lines.push(indent(theme, paint(theme, PALETTE.faint, `? ${followUps} ${noun} noted — pi answers inline (stub)`), w));
     }
     return windowLines(theme, lines, 0, h, w);
 }

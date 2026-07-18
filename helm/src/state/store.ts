@@ -11,7 +11,7 @@
  * notifies — callers debounce at the render layer).
  */
 import { autoResolve, buildPrecedent } from "./precedents.js";
-import type { Escalation, HelmFooterModel, HelmState, Loop, Workflow } from "./types.js";
+import type { Escalation, Goal, HelmFooterModel, HelmState, JournalEvent, Loop, Precedent, Workflow } from "./types.js";
 
 /**
  * Stable comparator for the needs-you queue: oldest-blocked first, ties broken by
@@ -93,15 +93,74 @@ export class HelmStore {
     this.emit();
   }
 
+  resumeWorkflow(id: string): void {
+    const workflows = this.state.workflows.map((workflow) =>
+      workflow.id === id && workflow.state === "paused"
+        ? { ...workflow, state: "running" as const }
+        : workflow,
+    );
+    this.state = { ...this.state, workflows };
+    this.resort();
+    this.emit();
+  }
+
+  addGoal(goal: Goal): void {
+    if (this.state.goals.some((item) => item.id === goal.id)) return;
+    this.state = { ...this.state, goals: [...this.state.goals, goal] };
+    this.emit();
+  }
+
+  updateGoal(id: string, update: Partial<Omit<Goal, "id">>): void {
+    this.state = {
+      ...this.state,
+      goals: this.state.goals.map((goal) => goal.id === id ? { ...goal, ...update } : goal),
+    };
+    this.emit();
+  }
+
+  upsertLoop(loop: Loop): void {
+    const found = this.state.loops.some((item) => item.id === loop.id);
+    this.state = {
+      ...this.state,
+      loops: found ? this.state.loops.map((item) => item.id === loop.id ? loop : item) : [...this.state.loops, loop],
+    };
+    this.resort();
+    this.emit();
+  }
+
+  toggleLoop(id: string): void {
+    this.state = {
+      ...this.state,
+      loops: this.state.loops.map((loop) => loop.id === id
+        ? {
+            ...loop,
+            health: loop.health === "paused" ? "healthy" as const : "paused" as const,
+            pausedReason: loop.health === "paused" ? undefined : "paused by operator",
+          }
+        : loop),
+    };
+    this.resort();
+    this.emit();
+  }
+
+  appendJournal(event: JournalEvent): void {
+    if (this.state.journal.some((item) => item.id === event.id)) return;
+    this.state = { ...this.state, journal: [...this.state.journal, event] };
+    this.emit();
+  }
+
+  replacePrecedents(precedents: Precedent[]): void {
+    this.state = { ...this.state, precedents: [...precedents] };
+    this.emit();
+  }
+
   /**
    * Resolve an escalation by choosing option `index`: record the decision as a
    * PRECEDENT and remove the escalation from the needs-you queue. Unknown ids or
    * out-of-range indices are a no-op (still notifies — callers debounce renders).
    *
-   * ponytail / SEAM: precedents live IN MEMORY for Phase 4. Disk persistence
-   * (write-through to a precedents file on decide, hydrate on launch) is a
-   * Phase-5/closeout task — do NOT add fs here. The store is the single owner, so
-   * that seam is a `writePrecedents(this.state.precedents)` call at this line.
+   * The store remains filesystem-agnostic. RealDataSource persists its complete
+   * project domain immediately after this mutation.
    */
   decide(escalationId: string, index: number): void {
     const escalation = this.state.escalations.find((item) => item.id === escalationId);
@@ -115,7 +174,6 @@ export class HelmStore {
       precedents: [...this.state.precedents, precedent],
       escalations: this.state.escalations.filter((item) => item.id !== escalationId),
     };
-    // TODO(phase-5): writePrecedents(this.state.precedents) — persist to disk here.
     this.resort();
     this.emit();
   }

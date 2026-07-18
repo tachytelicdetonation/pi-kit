@@ -101,6 +101,7 @@ test("`s` (accept schedule) after a passed trial returns to home", async () => {
   app.handleInput("t");
   await flush();
   app.handleInput("s"); // accept schedule → the loop goes live
+  await flush();
   assert.match(stripAnsi(app.render(120)[0]), /mission control/, "accepting returns to home");
 });
 
@@ -115,10 +116,13 @@ test("a FAILED trial reports and REOPENS the builder (never auto-retries)", asyn
   assert.match(stripAnsi(app.render(120)[0]), /new loop/, "still on the builder, not scheduled");
 });
 
-test("`x` discards the builder back to home", () => {
+test("`x` confirms before discarding the builder", async () => {
   const app = new HelmApp(fakeTui(30, 120), theme, () => {});
   intoBuilder(app);
   app.handleInput("x");
+  assert.match(stripAnsi(app.render(120)[0]), /new loop/, "confirmation leaves the builder visible");
+  app.handleInput("y");
+  await flush();
   assert.match(stripAnsi(app.render(120)[0]), /mission control/, "x pops back to home");
 });
 

@@ -25,12 +25,13 @@ import type { Component } from "@earendil-works/pi-tui";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { divider, header } from "./chrome.js";
 import { MockDataSource } from "./data/mock.js";
-import type { DataSource } from "./data/source.js";
+import type { DataSource, HelmCommand, HelmCommandResult } from "./data/source.js";
 import { renderHelmFooter, type FooterVariant } from "./footer.js";
 import { decodeKey } from "./keys.js";
 import { initialStack, transition, type Screen } from "./router.js";
 import { renderCloseout } from "./screens/closeout.js";
 import { renderDigest } from "./screens/digest.js";
+import { renderDocument } from "./screens/document.js";
 import { renderDrillIn, renderDrillInCounts } from "./screens/drill-in.js";
 import { renderEscalation } from "./screens/escalation.js";
 import { renderIntake } from "./screens/intake.js";
@@ -60,15 +61,31 @@ function safeRows(rows: number): number {
   return Number.isFinite(rows) ? Math.max(0, Math.floor(rows)) : 0;
 }
 
+type InputIntent =
+  | { kind: "homeGoal" }
+  | { kind: "intakeAnswer"; draftId: string }
+  | { kind: "intakePlan"; draftId: string; index: number }
+  | { kind: "loopEdit"; loopId: string }
+  | { kind: "sessionSteer"; worktreeId: string }
+  | { kind: "escalationFollowup"; escalationId: string }
+  | { kind: "contextAsk"; context: string };
+
+interface PendingConfirmation {
+  label: string;
+  accept: () => void;
+}
+
 export class HelmApp implements Component {
   private buffer = "";
+  private inputIntent?: InputIntent;
+  private pendingConfirm?: PendingConfirmation;
+  private planPickerDraftId?: string;
+  private notice = "";
   private stack: Screen[] = initialStack();
   /** Per-screen selection index, keyed by {@link screenKey}. */
   private readonly selections = new Map<string, number>();
   /** Per-session set of expanded activity-line indices, keyed by {@link screenKey}. */
   private readonly expanded = new Map<string, Set<number>>();
-  /** Per-escalation follow-up ("?") count — a marked stub (appended dim line). */
-  private readonly followUps = new Map<string, number>();
   /** ctrl+u usage popover: an overlay SLOT, not a stack frame. */
   private popoverOpen = false;
   /** `?` per-screen help: a one-line dim hint shown on the prompt line. */
@@ -82,17 +99,14 @@ export class HelmApp implements Component {
   private readonly dataSource: DataSource;
   private readonly unsubscribe: () => void;
 
+  /** `onBell` announces new escalations; `onAgentPrompt` returns judgment work to Pi. */
   constructor(
     private readonly tui: TuiLike,
     private readonly theme: ThemeLike,
     private readonly done: (result: void) => void,
     dataSource: DataSource = new MockDataSource(),
-    /**
-     * Optional bell sink: called when a NEW needs-you item is added. The extension
-     * wires this to write BEL ("\x07"). SEAM: an OS notification when unfocused is
-     * out of reach of the extension API — see the extension's marked TODO.
-     */
     private readonly onBell?: () => void,
+    private readonly onAgentPrompt?: (prompt: string) => void,
   ) {
     this.dataSource = dataSource;
     // 7c: on launch, show the catch-up digest ABOVE home when away > 30 min, so
@@ -178,6 +192,8 @@ export class HelmApp implements Component {
         return `loopBuilder:${top.loopId}`;
       case "closeout":
         return `closeout:${top.goalId}`;
+      case "viewer":
+        return `viewer:${top.title}`;
       default:
         return top.id;
     }
@@ -219,6 +235,10 @@ export class HelmApp implements Component {
         return this.dataSource.getDrillIn(top.workflowId)?.worktrees.length ?? 0;
       case "session":
         return this.dataSource.getSession(top.worktreeId)?.lines.length ?? 0;
+      case "intake":
+        return this.planPickerDraftId === top.draftId
+          ? this.dataSource.getIntake(top.draftId)?.planWorkflows.length ?? 0
+          : 0;
       case "search":
         return this.dataSource.search(top.query).length;
       default:
@@ -260,6 +280,8 @@ export class HelmApp implements Component {
       }
       case "search":
         return "search";
+      case "viewer":
+        return top.title;
     }
   }
 
@@ -296,6 +318,8 @@ export class HelmApp implements Component {
         const count = this.dataSource.search(top.query).length;
         return top.query ? paint(this.theme, PALETTE.dim, `${count} ${count === 1 ? "match" : "matches"}`) : "";
       }
+      case "viewer":
+        return paint(this.theme, PALETTE.dim, `${top.lines.length} lines · esc back`);
       default:
         return this.headerCounts(state);
     }
@@ -327,8 +351,7 @@ export class HelmApp implements Component {
       case "escalation": {
         const escalation = this.dataSource.getEscalation(top.escalationId);
         if (!escalation) return [];
-        const followUps = this.followUps.get(`escalation:${top.escalationId}`) ?? 0;
-        return renderEscalation(escalation, this.theme, width, height, { followUps });
+        return renderEscalation(escalation, this.theme, width, height);
       }
       case "digest":
         return renderDigest(this.dataSource.getDigest(), this.theme, width, height);
@@ -356,6 +379,8 @@ export class HelmApp implements Component {
           height,
           this.getSelection(top),
         );
+      case "viewer":
+        return renderDocument(top.lines, this.theme, width, height);
       default:
         return renderMissionControl(state, this.theme, width, height, this.getSelection(top));
     }
@@ -363,7 +388,8 @@ export class HelmApp implements Component {
 
   /** The 7a trial-gate state for a loopBuilder screen (defaults to idle). */
   private trialState(top: Screen): TrialState {
-    return this.trials.get(this.screenKey(top)) ?? "idle";
+    return this.trials.get(this.screenKey(top))
+      ?? (top.id === "loopBuilder" && this.dataSource.getLoopDraft(top.loopId)?.trialPassed ? "passed" : "idle");
   }
 
   /** The below-body region: the input box for a session, else a single prompt line. */
@@ -384,8 +410,21 @@ export class HelmApp implements Component {
   private renderPrompt(top: Screen, width: number): string {
     if (width <= 0) return "";
     const caret = paint(this.theme, PALETTE.inputBorder, GLYPH.prompt);
+    if (this.pendingConfirm) {
+      return truncateToWidth(`${caret} ${paint(this.theme, PALETTE.warning, `confirm ${this.pendingConfirm.label} · y yes · n no`)}`, width, "");
+    }
     if (this.buffer) {
       return truncateToWidth(`${caret} ${paint(this.theme, PALETTE.primary, this.buffer)}`, width, "");
+    }
+    if (this.inputIntent) {
+      return truncateToWidth(`${caret} ${paint(this.theme, PALETTE.faint, this.inputPlaceholder(this.inputIntent))}`, width, "");
+    }
+    if (top.id === "intake" && this.planPickerDraftId === top.draftId) {
+      const count = this.dataSource.getIntake(top.draftId)?.planWorkflows.length ?? 0;
+      return truncateToWidth(`${caret} ${paint(this.theme, PALETTE.dim, `plan line ${Math.min(count, this.getSelection(top) + 1)}/${count} · j/k choose · enter edit · esc cancel`)}`, width, "");
+    }
+    if (this.notice) {
+      return truncateToWidth(`${caret} ${paint(this.theme, PALETTE.dim, this.notice)}`, width, "");
     }
     if (this.helpVisible) {
       return truncateToWidth(`${caret} ${paint(this.theme, PALETTE.dim, this.helpHint(top))}`, width, "");
@@ -414,9 +453,111 @@ export class HelmApp implements Component {
         return `a apply precedents · r full report · x archive · ${global}`;
       case "search":
         return "type to filter · enter open · esc close";
+      case "viewer":
+        return `esc back · ${global}`;
       default:
         return global;
     }
+  }
+
+  private inputPlaceholder(intent: InputIntent): string {
+    switch (intent.kind) {
+      case "homeGoal":
+        return "describe the goal · enter structure it · esc cancel";
+      case "intakeAnswer":
+        return "answer Pi's intake question · enter submit · esc cancel";
+      case "intakePlan":
+        return "rewrite as name: description · enter save · esc cancel";
+      case "loopEdit":
+        return "describe the loop behavior · enter restructure · esc cancel";
+      case "sessionSteer":
+        return "steer this worktree · enter send to Pi · esc cancel";
+      case "escalationFollowup":
+        return "ask a follow-up · enter send to Pi · esc cancel";
+      case "contextAsk":
+        return "talk to Pi about this view · enter send · esc cancel";
+    }
+  }
+
+  private startTyping(top: Screen, firstChar = ""): void {
+    this.helpVisible = false;
+    this.buffer = firstChar;
+    if (top.id === "home") this.inputIntent = { kind: "homeGoal" };
+    else if (top.id === "intake") this.inputIntent = { kind: "intakeAnswer", draftId: top.draftId };
+    else if (top.id === "loopBuilder") this.inputIntent = { kind: "loopEdit", loopId: top.loopId };
+    else if (top.id === "session") this.inputIntent = { kind: "sessionSteer", worktreeId: top.worktreeId };
+    else if (top.id === "escalation") this.inputIntent = { kind: "escalationFollowup", escalationId: top.escalationId };
+    else this.inputIntent = { kind: "contextAsk", context: this.contextLabel(top) };
+    this.tui.requestRender();
+  }
+
+  private submitBuffer(top: Screen): void {
+    const text = this.buffer.trim();
+    const intent = this.inputIntent ?? { kind: "contextAsk" as const, context: this.contextLabel(top) };
+    if (!text) {
+      this.notice = "Type a message before submitting.";
+      this.tui.requestRender();
+      return;
+    }
+    this.buffer = "";
+    this.inputIntent = undefined;
+    switch (intent.kind) {
+      case "homeGoal":
+        return this.runCommand({ type: "goal.createDraft", prompt: text }, (result) => {
+          if (result.id) this.push({ id: "intake", draftId: result.id });
+        });
+      case "intakeAnswer":
+        return this.runCommand({ type: "goal.answer", draftId: intent.draftId, text });
+      case "intakePlan":
+        return this.runCommand({ type: "goal.editPlan", draftId: intent.draftId, index: intent.index, text }, () => {
+          this.planPickerDraftId = undefined;
+        });
+      case "loopEdit":
+        return this.runCommand({ type: "loop.edit", loopId: intent.loopId, text });
+      case "sessionSteer":
+        return this.runCommand({ type: "session.steer", worktreeId: intent.worktreeId, text });
+      case "escalationFollowup":
+        return this.runCommand({ type: "escalation.ask", escalationId: intent.escalationId, text });
+      case "contextAsk":
+        return this.handoffToAgent(`The operator is in Helm's ${intent.context} view and asks:\n\n${text}`);
+    }
+  }
+
+  private runCommand(command: HelmCommand, onSuccess?: (result: HelmCommandResult) => void): void {
+    this.notice = "working …";
+    this.tui.requestRender();
+    void this.dataSource.execute(command)
+      .then((result) => {
+        if (result.ok === false) {
+          this.notice = result.message ?? "The action could not be completed.";
+          return;
+        }
+        onSuccess?.(result);
+        if (result.document) this.push({ id: "viewer", title: result.document.title, lines: result.document.lines });
+        if (result.agentPrompt) {
+          this.handoffToAgent(result.agentPrompt);
+          return;
+        }
+        this.notice = result.message ?? "Done.";
+      })
+      .catch((error) => {
+        this.notice = error instanceof Error ? error.message : String(error);
+      })
+      .finally(() => this.tui.requestRender());
+  }
+
+  private handoffToAgent(prompt: string): void {
+    if (this.onAgentPrompt) {
+      this.done();
+      this.onAgentPrompt(prompt);
+      return;
+    }
+    this.push({ id: "viewer", title: "Pi handoff", lines: prompt.split("\n") });
+  }
+
+  private confirm(label: string, accept: () => void): void {
+    this.pendingConfirm = { label, accept };
+    this.tui.requestRender();
   }
 
   handleInput(data: string): void {
@@ -443,17 +584,49 @@ export class HelmApp implements Component {
     if (!key) return;
 
     const top = this.top();
+    this.notice = "";
+
+    if (this.pendingConfirm) {
+      if (key.t === "char" && key.ch.toLowerCase() === "y") {
+        const action = this.pendingConfirm.accept;
+        this.pendingConfirm = undefined;
+        action();
+      } else if (key.t === "esc" || (key.t === "char" && key.ch.toLowerCase() === "n")) {
+        this.pendingConfirm = undefined;
+        this.tui.requestRender();
+      }
+      return;
+    }
 
     // (2) The search screen owns its keys (typing edits the QUERY, not the pi
     // prompt buffer), so it is routed before the buffer + global pipeline.
     if (top.id === "search") return this.dispatchSearch(top, key);
 
+    if (top.id === "intake" && this.planPickerDraftId === top.draftId && !this.inputIntent) {
+      if (key.t === "esc") {
+        this.planPickerDraftId = undefined;
+        this.tui.requestRender();
+      } else if (key.t === "up" || (key.t === "char" && key.ch === "k")) {
+        this.moveSelection(-1);
+      } else if (key.t === "down" || (key.t === "char" && key.ch === "j")) {
+        this.moveSelection(1);
+      } else if (key.t === "enter") {
+        this.inputIntent = { kind: "intakePlan", draftId: top.draftId, index: this.getSelection(top) };
+        this.tui.requestRender();
+      }
+      return;
+    }
+
     // (3) An open prompt buffer captures editing keys (on every other screen).
-    if (this.buffer.length > 0) {
+    if (this.buffer.length > 0 || this.inputIntent) {
       if (key.t === "char") this.buffer += key.ch;
       else if (key.t === "backspace") this.buffer = this.buffer.slice(0, -1);
-      else if (key.t === "esc") this.buffer = ""; // esc clears the buffer, never navigates
-      // enter / arrows / etc. are consumed as no-ops while typing.
+      else if (key.t === "esc") {
+        this.buffer = "";
+        this.inputIntent = undefined;
+      } else if (key.t === "enter") {
+        return this.submitBuffer(top);
+      }
       this.tui.requestRender();
       return;
     }
@@ -526,7 +699,10 @@ export class HelmApp implements Component {
   private openSearchResult(top: Screen & { id: "search" }): void {
     const result = this.dataSource.search(top.query)[this.getSelection(top)];
     const screen = result?.screen;
-    if (!screen) return; // not navigable yet — stay on search (pr / loopRun / deferred).
+    if (!screen) {
+      this.push({ id: "viewer", title: `${result.kind} · ${result.label}`, lines: [result.sublabel ?? "No further detail."] });
+      return;
+    }
     // Guard the "auditable within two keys" promise: a result pointing at an
     // escalation that has since been resolved would open a blank card. Fall back
     // to staying on search rather than descending into nothing.
@@ -583,11 +759,22 @@ export class HelmApp implements Component {
       return;
     }
     if (top.id === "escalation") {
-      // 7b enter: open the full session. Reuse the 4a screen; a generic session id
-      // is fine when the escalation has no associated worktree.
+      // 7b enter: open the full session when one exists. A decision raised outside
+      // an agent run still gets a useful read-only evidence view instead of a blank screen.
       const escalation = this.dataSource.getEscalation(top.escalationId);
       const worktreeId = escalation?.worktreeId ?? `esc-${top.escalationId}`;
-      this.push({ id: "session", worktreeId });
+      if (this.dataSource.getSession(worktreeId)) this.push({ id: "session", worktreeId });
+      else if (escalation) this.push({
+        id: "viewer",
+        title: escalation.problem,
+        lines: [
+          "Evidence",
+          ...escalation.evidence,
+          "",
+          "Options",
+          ...escalation.options.map((option, index) => `${index + 1}. ${option.text}${option.recommended ? " (recommended)" : ""}`),
+        ],
+      });
       return;
     }
     if (top.id === "digest") {
@@ -635,48 +822,47 @@ export class HelmApp implements Component {
     if (ch === "[") return this.cycleEscalation(top.escalationId, -1);
     if (ch === "]") return this.cycleEscalation(top.escalationId, 1);
     if (ch >= "1" && ch <= "9") return this.decideOption(top.escalationId, ch.charCodeAt(0) - "1".charCodeAt(0));
-    // Unbound printable focuses/starts the prompt (the Gmail rule).
-    this.buffer += ch;
-    this.tui.requestRender();
+    this.startTyping(top, ch);
   }
 
-  /** 7c printable keys: `d` decisions first · `l` full log (stub). */
+  /** 7c printable keys: `d` decisions first · `l` full durable journal. */
   private handleDigestChar(ch: string): void {
     if (ch === "d") return this.digestToDecisions();
-    if (ch === "l") return; // full log — Phase 5 stub. TODO(phase-5): open the log.
-    // Unbound printable focuses/starts the prompt (the Gmail rule).
-    this.buffer += ch;
-    this.tui.requestRender();
+    if (ch === "l") return this.runCommand({ type: "digest.fullLog" });
+    this.startTyping(this.top(), ch);
   }
 
   /**
    * 6a printable keys: `g` go (locks intent / "spawns" — DISABLED while pi still has
-   * open questions, a no-op that keeps it dim), `e` edit plan (stub), `x` discard.
+   * open questions, a no-op that keeps it dim), `e` edit plan, `x` discard.
    */
   private handleIntakeChar(top: Screen & { id: "intake" }, ch: string): void {
     if (ch === "g") return this.intakeGo(top);
-    if (ch === "e") return; // edit plan — marked stub. TODO: reopen the plan editor.
-    if (ch === "x") return this.ascend(); // discard = pop back to home
-    // Unbound printable focuses/starts the prompt (the Gmail rule).
-    this.buffer += ch;
-    this.tui.requestRender();
+    if (ch === "e") {
+      this.planPickerDraftId = top.draftId;
+      this.setSelection(top, 0);
+      this.tui.requestRender();
+      return;
+    }
+    if (ch === "x") return this.confirm("discard this goal draft", () => {
+      this.runCommand({ type: "goal.discardDraft", draftId: top.draftId }, () => this.ascend());
+    });
+    this.startTyping(top, ch);
   }
 
   /**
    * 6a `g`: while open questions remain this is a no-op (the action renders dim). Once
-   * resolved it locks intent and "spawns" the workflows — a marked stub: a real
-   * source creates the goal + lanes; here we return to mission control.
+   * resolved it persists the goal and starts its real WorkflowManager lanes.
    */
   private intakeGo(top: Screen & { id: "intake" }): void {
     const draft = this.dataSource.getIntake(top.draftId);
     if (!draft || draft.openQuestions) return; // disabled while pi has open questions
-    // TODO(seam): dataSource.spawnGoal(draft) — create the goal + workflows here.
-    this.ascend();
+    this.runCommand({ type: "goal.spawn", draftId: top.draftId }, () => this.ascend());
   }
 
   /**
-   * 7a printable keys. Before a trial: `t` trial run · `e` edit (stub) · `x` discard.
-   * After a PASSED trial: `s` accept schedule (stub) · `r` revise (reopen builder) ·
+   * 7a printable keys. Before a trial: `t` trial run · `e` edit · `x` discard.
+   * After a PASSED trial: `s` accept schedule · `r` revise (reopen builder) ·
    * `x` discard. A FAILED trial reopens the builder (via `t` to re-run).
    */
   private handleLoopBuilderChar(top: Screen & { id: "loopBuilder" }, ch: string): void {
@@ -693,11 +879,15 @@ export class HelmApp implements Component {
       if (trial === "passed") return this.reviseLoop(top);
       return;
     }
-    if (ch === "e") return; // edit — advertised action; a marked stub (consumed, not typed)
-    if (ch === "x") return this.ascend(); // discard = pop
-    // Unbound printable focuses/starts the prompt (the Gmail rule).
-    this.buffer += ch;
-    this.tui.requestRender();
+    if (ch === "e") {
+      this.inputIntent = { kind: "loopEdit", loopId: top.loopId };
+      this.tui.requestRender();
+      return;
+    }
+    if (ch === "x") return this.confirm("discard this loop draft", () => {
+      this.runCommand({ type: "loop.discardDraft", loopId: top.loopId }, () => this.ascend());
+    });
+    this.startTyping(top, ch);
   }
 
   /**
@@ -720,11 +910,12 @@ export class HelmApp implements Component {
       .finally(() => this.tui.requestRender());
   }
 
-  /** 7a `s`: accept the schedule (marked stub) and return to home; the loop goes live. */
+  /** 7a `s`: persist the accepted schedule and return to mission control. */
   private acceptSchedule(top: Screen & { id: "loopBuilder" }): void {
-    // TODO(seam): dataSource.scheduleLoop(top.loopId) — persist the live schedule.
-    this.trials.delete(this.screenKey(top));
-    this.ascend();
+    this.runCommand({ type: "loop.schedule", loopId: top.loopId }, () => {
+      this.trials.delete(this.screenKey(top));
+      this.ascend();
+    });
   }
 
   /** 7a `r`: revise — reopen the builder by resetting the trial gate to idle. */
@@ -735,29 +926,28 @@ export class HelmApp implements Component {
 
   /**
    * 7d printable keys: `a` apply precedents (marks them applied — a confirmation
-   * line), `r` full report (stub), `x` archive the goal and return home.
+   * line), `r` full report, `x` archive the goal and return home.
    */
   private handleCloseoutChar(top: Screen & { id: "closeout" }, ch: string): void {
     if (ch === "a") return this.applyPrecedents(top);
-    if (ch === "r") return; // full report — marked stub.
+    if (ch === "r") return this.runCommand({ type: "goal.report", goalId: top.goalId });
     if (ch === "x") return this.archiveCurrentGoal(top);
-    // Unbound printable focuses/starts the prompt (the Gmail rule).
-    this.buffer += ch;
-    this.tui.requestRender();
+    this.startTyping(top, ch);
   }
 
-  /** 7d `a`: apply the proposed precedents (a marked stub — shows a confirmation). */
+  /** 7d `a`: confirm, then hand the repository guidance edit to Pi. */
   private applyPrecedents(top: Screen & { id: "closeout" }): void {
-    // TODO(seam): dataSource.applyPrecedents(top.goalId) — persist to CLAUDE.md /
-    // skills (same disk seam as the precedent store in store.ts).
-    this.applied.add(this.screenKey(top));
-    this.tui.requestRender();
+    this.confirm("apply these precedents to repository guidance", () => {
+      this.applied.add(this.screenKey(top));
+      this.runCommand({ type: "goal.applyPrecedents", goalId: top.goalId });
+    });
   }
 
   /** 7d `x`: archive the completed goal (search still finds it) and return home. */
   private archiveCurrentGoal(top: Screen & { id: "closeout" }): void {
-    this.dataSource.archiveGoal(top.goalId);
-    this.ascend();
+    this.confirm("archive this completed goal", () => {
+      this.runCommand({ type: "goal.archive", goalId: top.goalId }, () => this.ascend());
+    });
   }
 
   /**
@@ -797,10 +987,9 @@ export class HelmApp implements Component {
     this.tui.requestRender();
   }
 
-  /** 7b `?`: append a follow-up (a marked no-op stub — a dim line on the card). */
+  /** 7b `?`: focus a real follow-up prompt for Pi. */
   private askFollowUp(escalationId: string): void {
-    const key = `escalation:${escalationId}`;
-    this.followUps.set(key, (this.followUps.get(key) ?? 0) + 1);
+    this.inputIntent = { kind: "escalationFollowup", escalationId };
     this.tui.requestRender();
   }
 
@@ -852,9 +1041,17 @@ export class HelmApp implements Component {
     if (top.id === "home") {
       switch (ch) {
         case "n":
-          return this.push({ id: "intake", draftId: "d-esm" }); // new goal → 6a intake
+          {
+            const draftId = `d-goal-${Date.now().toString(36)}`;
+            void this.dataSource.execute({ type: "goal.createDraft", prompt: "", draftId }).catch(() => {});
+            return this.push({ id: "intake", draftId });
+          }
         case "N":
-          return this.push({ id: "loopBuilder", loopId: "l-draft-gh-issues" }); // new loop → 7a
+          {
+            const draftId = `l-loop-${Date.now().toString(36)}`;
+            void this.dataSource.execute({ type: "loop.createDraft", prompt: "", draftId }).catch(() => {});
+            return this.push({ id: "loopBuilder", loopId: draftId });
+          }
         case "p":
           return this.pauseSelected(top);
       }
@@ -862,31 +1059,36 @@ export class HelmApp implements Component {
       // its 7b card (never deciding blind).
       if (ch >= "1" && ch <= "9") return this.openNeedsYou(ch.charCodeAt(0) - "1".charCodeAt(0));
     } else if (top.id === "drillin") {
+      const worktree = this.dataSource.getDrillIn(top.workflowId)?.worktrees[this.getSelection(top)];
+      if (!worktree) return;
       switch (ch) {
         case "p":
-          // pause worktree — no worktree-level pause in the data source yet.
-          return; // TODO(phase-4): pause the selected worktree.
+          return this.runCommand({ type: "worktree.togglePause", workflowId: top.workflowId, worktreeId: worktree.id });
         case "r":
-          return; // reassign queue slice — TODO(phase-4).
+          return this.confirm(`reassign ${worktree.name}`, () => {
+            this.runCommand({ type: "worktree.reassign", workflowId: top.workflowId, worktreeId: worktree.id });
+          });
         case "t":
-          return; // test-race detail — TODO(phase-4).
+          return this.runCommand({ type: "worktree.testDetails", workflowId: top.workflowId, worktreeId: worktree.id });
       }
     } else if (top.id === "session") {
       switch (ch) {
         case "o":
           return this.toggleExpand(top);
         case "d":
-          return; // full diff — TODO(phase-4).
+          return this.runCommand({ type: "session.diff", worktreeId: top.worktreeId });
         case "m":
-          return; // merge — TODO(phase-4).
+          return this.confirm(`merge ${top.worktreeId}`, () => {
+            this.runCommand({ type: "session.merge", worktreeId: top.worktreeId });
+          });
         case "i":
-          return; // interrupt & steer — TODO(phase-4).
+          this.inputIntent = { kind: "sessionSteer", worktreeId: top.worktreeId };
+          this.tui.requestRender();
+          return;
       }
     }
 
-    // Unbound printable with an empty buffer focuses/starts the prompt.
-    this.buffer += ch;
-    this.tui.requestRender();
+    this.startTyping(top, ch);
   }
 
   /** Move the active screen's selection cursor, clamped to its row range. */
@@ -919,15 +1121,15 @@ export class HelmApp implements Component {
   }
 
   /**
-   * `p` (home): pause the selected row. A workflow row pauses that lane; anything
-   * else (or an empty list) falls back to pause-all — always a safe operation.
+   * `p` (home): toggle the selected workflow or loop. An empty list falls back
+   * to pause-all so the key always has a safe, reversible result.
    */
   private pauseSelected(top: Screen): void {
     const rows = selectableRows(this.dataSource.snapshot());
     const row = rows[this.getSelection(top)];
-    if (row?.kind === "workflow") this.dataSource.pauseWorkflow(row.id);
+    if (row?.kind === "workflow") this.runCommand({ type: "workflow.togglePause", workflowId: row.id });
+    else if (row?.kind === "loop") this.runCommand({ type: "loop.togglePause", loopId: row.id });
     else this.dataSource.pauseAll();
-    // The store notifies subscribers, which requests a render.
   }
 
   invalidate(): void {

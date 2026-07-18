@@ -54,14 +54,18 @@ export default function helmExtension(pi: ExtensionAPI) {
       if (ctx.mode !== "tui") { ctx.ui.notify("helm is only available in the interactive TUI", "warning"); return; }
       uiRef.ui = ctx.ui;
       const onBell = () => { try { process.stdout.write("\x07"); } catch { /* seam: host bell API */ } };
+      let agentHandoff: string | undefined;
       state.open = true;
       footer.suspendForFullScreen();
       try {
-        await ctx.ui.custom<void>((tui, theme, _keybindings, done) => new HelmApp(tui, theme, done, ds, onBell));
+        await ctx.ui.custom<void>((tui, theme, _keybindings, done) =>
+          new HelmApp(tui, theme, done, ds, onBell, (prompt) => { agentHandoff = prompt; }),
+        );
       } finally {
         state.open = false;
         footer.restore();
       }
+      if (agentHandoff) pi.sendUserMessage(agentHandoff);
     },
   });
 }

@@ -20,6 +20,7 @@ export type Screen =
   | { id: "escalation"; escalationId: string }
   | { id: "loopBuilder"; loopId: string }
   | { id: "closeout"; goalId: string }
+  | { id: "viewer"; title: string; lines: string[] }
   | { id: "search"; query: string };
 
 /** A navigation intent applied to the stack by {@link transition}. */

@@ -1,10 +1,8 @@
 /**
  * DataSource — the boundary between helm's UI and whatever feeds it.
  *
- * Phase 2 only exercises the read + pause surface (`snapshot`, `subscribe`,
- * `pauseAll`, `resumeAll`, `pauseWorkflow`); the full interface is declared now so
- * later phases (decide/archive/trial/search) plug in without reshaping call sites.
- * The unimplemented methods are clearly marked in {@link ./mock.ts}.
+ * Reads and commands share this boundary so renderers stay pure while every
+ * advertised key has one explicit, testable operation.
  */
 import type { Screen } from "./../router.js";
 import type {
@@ -33,6 +31,42 @@ export interface SearchResult {
   label: string;
   sublabel?: string;
   screen?: Screen;
+}
+
+export type HelmCommand =
+  | { type: "goal.createDraft"; prompt: string; draftId?: string }
+  | { type: "goal.answer"; draftId: string; text: string }
+  | { type: "goal.editPlan"; draftId: string; index: number; text: string }
+  | { type: "goal.discardDraft"; draftId: string }
+  | { type: "goal.spawn"; draftId: string }
+  | { type: "goal.togglePause"; goalId: string }
+  | { type: "goal.archive"; goalId: string }
+  | { type: "goal.applyPrecedents"; goalId: string }
+  | { type: "goal.report"; goalId: string }
+  | { type: "loop.createDraft"; prompt: string; draftId?: string }
+  | { type: "loop.edit"; loopId: string; text: string }
+  | { type: "loop.discardDraft"; loopId: string }
+  | { type: "loop.schedule"; loopId: string }
+  | { type: "loop.togglePause"; loopId: string }
+  | { type: "workflow.togglePause"; workflowId: string }
+  | { type: "worktree.togglePause"; workflowId: string; worktreeId: string }
+  | { type: "worktree.reassign"; workflowId: string; worktreeId: string }
+  | { type: "worktree.testDetails"; workflowId: string; worktreeId: string }
+  | { type: "session.diff"; worktreeId: string }
+  | { type: "session.merge"; worktreeId: string }
+  | { type: "session.steer"; worktreeId: string; text: string }
+  | { type: "escalation.ask"; escalationId: string; text: string }
+  | { type: "digest.fullLog" };
+
+export interface HelmCommandResult {
+  /** Newly-created goal/loop/draft/run id. */
+  id?: string;
+  ok?: boolean;
+  message?: string;
+  /** Read-only document to show inside Helm. */
+  document?: { title: string; lines: string[] };
+  /** A judgment/destructive task intentionally handed to Pi's normal agent. */
+  agentPrompt?: string;
 }
 
 export interface DataSource {
@@ -65,7 +99,7 @@ export interface DataSource {
   getEscalation(id: string): Escalation | undefined;
   /** The needs-you queue in order (the tab triage walk + `[ ]` cycle order). */
   listEscalations(): Escalation[];
-  /** The recorded decision precedents (in-memory in Phase 4). */
+  /** The recorded decision precedents (durable in the production source). */
   precedents(): Precedent[];
 
   // ── 7c catch-up digest (Phase 4) ─────────────────────────────────────────
@@ -98,4 +132,7 @@ export interface DataSource {
   trialLoop(id: string): Promise<{ ok: boolean }>;
   /** Search everything — goals, PRs, decisions, precedents, loop runs; ARCHIVED included. */
   search(query: string): SearchResult[];
+
+  /** Execute one user-visible Helm command. Every advertised key routes here. */
+  execute(command: HelmCommand): Promise<HelmCommandResult>;
 }

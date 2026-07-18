@@ -108,8 +108,9 @@ test("'enter' on the digest goes to mission control (home)", () => {
   assert.match(stripAnsi(app.render(120)[0]), /mission control/, "enter lands on home");
 });
 
-test("'l' (full log) is a no-op stub that stays on the digest", () => {
+test("'l' opens the full activity log", async () => {
   const app = new HelmApp(fakeTui(30, 120), theme, () => {}, new MockDataSource({ shouldShowDigest: true }));
   app.handleInput("l");
-  assert.match(stripAnsi(app.render(120)[0]), /while you were away/, "stays on the digest");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.match(stripAnsi(app.render(120)[0]), /full activity log/);
 });

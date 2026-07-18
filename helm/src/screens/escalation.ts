@@ -22,17 +22,11 @@ import type { Escalation, EscalationOption } from "./../state/types.js";
 /** Left gutter (2 cells) so the card body aligns with the other screens. */
 const INDENT = "  ";
 
-/** How many follow-up ("?") questions have been asked on this card (stub display). */
-export interface EscalationView {
-  followUps?: number;
-}
-
 export function renderEscalation(
   escalation: Escalation,
   theme: ThemeLike,
   width: number,
   height: number,
-  view: EscalationView = {},
 ): string[] {
   const w = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
   const h = Number.isFinite(height) ? Math.max(0, Math.floor(height)) : 0;
@@ -91,13 +85,6 @@ export function renderEscalation(
       `${paint(theme, PALETTE.mid, `"${escalation.precedentPhrase}"`)}` +
       `${paint(theme, PALETTE.dim, " is remembered")}`;
     lines.push(indent(theme, remind, w));
-  }
-
-  // ── Follow-up stub (marked no-op) ─────────────────────────────────────────
-  const followUps = view.followUps ?? 0;
-  if (followUps > 0) {
-    const noun = followUps === 1 ? "follow-up" : "follow-ups";
-    lines.push(indent(theme, paint(theme, PALETTE.faint, `? ${followUps} ${noun} noted — pi answers inline (stub)`), w));
   }
 
   return windowLines(theme, lines, 0, h, w);

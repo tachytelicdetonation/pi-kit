@@ -151,12 +151,26 @@ test("enter on a card opens the full 4a session (its associated worktree)", () =
   assert.ok(lines.some((l) => l.includes("add per-user rate limiting")), "session transcript present");
 });
 
-test("'?' appends a follow-up stub line without leaving the card", () => {
+test("enter on a card without a live session opens its evidence instead of a blank view", () => {
+  class NoSessionSource extends MockDataSource {
+    override getSession(): undefined {
+      return undefined;
+    }
+  }
+  const app = new HelmApp(fakeTui(30, 120), theme, () => {}, new NoSessionSource());
+  intoCard(app);
+  app.handleInput("\r");
+  const lines = strip(app.render(120));
+  assert.match(lines[0], /exports\.map\.json/, "the evidence viewer has a useful title");
+  assert.ok(lines.some((line) => line.includes("Evidence")), "the decision evidence remains available");
+});
+
+test("'?' opens the real follow-up editor without leaving the card", () => {
   const app = new HelmApp(fakeTui(30, 120), theme, () => {});
   intoCard(app);
   assert.ok(!strip(app.render(120)).some((l) => l.includes("follow-up")));
   app.handleInput("?");
   const lines = strip(app.render(120));
-  assert.ok(lines.some((l) => /follow-up/.test(l)), "a follow-up stub line appears");
-  assert.match(lines[0], /needs you 1\/2/, "still on the card (a no-op stub)");
+  assert.ok(lines.some((l) => /ask a follow-up/.test(l)), "the follow-up editor appears");
+  assert.match(lines[0], /needs you 1\/2/, "still on the card while composing");
 });

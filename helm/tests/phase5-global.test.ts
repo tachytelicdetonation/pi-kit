@@ -22,7 +22,7 @@ function fakeTui(rows: number, columns: number) {
 }
 
 // ── resize reflow: render reads terminal.rows/width live, on EVERY screen ────────
-test("a rows change reflows every screen to the new exact line count", () => {
+test("a rows change reflows every screen to the new exact line count", async () => {
   const { tui } = fakeTui(24, 120);
   const app = new HelmApp(tui, theme256, () => {});
   // Walk each reachable screen and assert it reflows on a rows change.
@@ -47,9 +47,13 @@ test("a rows change reflows every screen to the new exact line count", () => {
   app.handleInput("n"); // → intake
   visit(/new goal/);
   app.handleInput("x");
+  app.handleInput("y");
+  await new Promise<void>((resolve) => setImmediate(resolve));
   app.handleInput("N"); // → loop builder
   visit(/new loop/);
   app.handleInput("x");
+  app.handleInput("y");
+  await new Promise<void>((resolve) => setImmediate(resolve));
   app.handleInput("/"); // → search
   for (const ch of "esm") app.handleInput(ch);
   visit(/search/);

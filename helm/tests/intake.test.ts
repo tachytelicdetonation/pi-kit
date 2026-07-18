@@ -86,17 +86,21 @@ test("`g` is a NO-OP while pi has open questions (stays on intake, dim)", () => 
   assert.match(lines[0], /new goal/, "still on the intake card (g did nothing)");
 });
 
-test("`g` locks intent and returns home once questions are resolved", () => {
+test("`g` locks intent and returns home once questions are resolved", async () => {
   const app = new HelmApp(fakeTui(30, 120), theme, () => {}, new IntakeSource({ openQuestions: false }));
   app.handleInput("n"); // → intake (resolved)
   assert.match(stripAnsi(app.render(120)[0]), /new goal/);
   app.handleInput("g"); // go is enabled — spawns + returns to mission control
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.match(stripAnsi(app.render(120)[0]), /mission control/, "g descends back to home");
 });
 
-test("`x` discards the intake (esc-like pop back to home)", () => {
+test("`x` confirms before discarding the intake", async () => {
   const app = new HelmApp(fakeTui(30, 120), theme, () => {});
   app.handleInput("n");
   app.handleInput("x");
+  assert.match(stripAnsi(app.render(120)[0]), /new goal/, "confirmation leaves the draft visible");
+  app.handleInput("y");
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.match(stripAnsi(app.render(120)[0]), /mission control/, "x pops back to home");
 });

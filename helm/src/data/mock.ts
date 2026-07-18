@@ -21,7 +21,7 @@ import type {
   UsageDetail,
   WorkflowDetail,
 } from "./../state/types.js";
-import type { DataSource, SearchResult } from "./source.js";
+import type { DataSource, HelmCommand, HelmCommandResult, SearchResult } from "./source.js";
 
 const MAIN_MODEL = "gpt-5.6-sol";
 
@@ -508,6 +508,8 @@ export function seedState(): HelmState {
 }
 
 export class MockDataSource implements DataSource {
+  private readonly intakes = new Map<string, IntakeDraft>();
+  private readonly loopDrafts = new Map<string, LoopDraft>();
   private readonly store: HelmStore;
   private readonly showDigest: boolean;
 
@@ -590,15 +592,23 @@ export class MockDataSource implements DataSource {
   // ── 6a / 7a / 7d drafts + closeout (Phase 5) ─────────────────────────────
   getIntake(draftId: string): IntakeDraft | undefined {
     if (!draftId) return undefined;
-    return seedIntake(draftId);
+    const existing = this.intakes.get(draftId);
+    if (existing) return existing;
+    const draft = seedIntake(draftId);
+    this.intakes.set(draftId, draft);
+    return draft;
   }
 
   getLoopDraft(loopId: string): LoopDraft | undefined {
     if (!loopId) return undefined;
+    const existing = this.loopDrafts.get(loopId);
+    if (existing) return existing;
     // Reuse an existing loop's name when the id is a live loop; otherwise the draft
     // keeps the gh-issues shape (a single seeded structure, like a session).
     const loop = this.store.getState().loops.find((item) => item.id === loopId);
-    return seedLoopDraft(loopId, loop?.name ?? "gh-issues");
+    const draft = seedLoopDraft(loopId, loop?.name ?? "gh-issues");
+    this.loopDrafts.set(loopId, draft);
+    return draft;
   }
 
   getCloseout(goalId: string): Closeout | undefined {
@@ -635,7 +645,10 @@ export class MockDataSource implements DataSource {
   trialLoop(id: string): Promise<{ ok: boolean }> {
     // Deterministic outcome for tests: a draft id containing "fail" fails its trial,
     // everything else passes. A real source would run the loop once under review.
-    return Promise.resolve({ ok: !id.includes("fail") });
+    const ok = !id.includes("fail");
+    const draft = this.getLoopDraft(id);
+    if (ok && draft) this.loopDrafts.set(id, { ...draft, trialPassed: true });
+    return Promise.resolve({ ok });
   }
 
   search(query: string): SearchResult[] {
@@ -655,5 +668,93 @@ export class MockDataSource implements DataSource {
       const haystack = `${result.label} ${result.sublabel ?? ""}`.toLowerCase();
       return haystack.includes(q);
     });
+  }
+
+  async execute(command: HelmCommand): Promise<HelmCommandResult> {
+    switch (command.type) {
+      case "goal.createDraft": {
+        const id = command.draftId ?? (command.prompt ? `d-${command.prompt.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 24)}` : "d-esm");
+        const seeded = seedIntake(id);
+        this.intakes.set(id, command.prompt ? {
+          ...seeded,
+          goalName: command.prompt,
+          goalPrompt: command.prompt,
+          questions: [],
+          openQuestions: false,
+        } : seeded);
+        return { id, ok: true };
+      }
+      case "goal.answer": {
+        const draft = this.getIntake(command.draftId);
+        if (draft) this.intakes.set(command.draftId, { ...draft, userReply: command.text, openQuestions: false });
+        return { ok: Boolean(draft) };
+      }
+      case "goal.editPlan": {
+        const draft = this.getIntake(command.draftId);
+        if (draft?.planWorkflows[command.index]) {
+          const planWorkflows = draft.planWorkflows.map((plan, index) => index === command.index ? { ...plan, description: command.text } : plan);
+          this.intakes.set(command.draftId, { ...draft, planWorkflows });
+        }
+        return { ok: Boolean(draft) };
+      }
+      case "goal.discardDraft":
+        this.intakes.delete(command.draftId);
+        return { ok: true };
+      case "goal.spawn":
+        return { id: command.draftId, ok: true, message: "Goal launched." };
+      case "goal.togglePause":
+        return { ok: true };
+      case "loop.togglePause":
+        this.store.toggleLoop(command.loopId);
+        return { ok: true };
+      case "workflow.togglePause": {
+        const lane = this.store.getState().workflows.find((item) => item.id === command.workflowId);
+        if (lane?.state === "paused") this.store.resumeWorkflow(lane.id);
+        else this.store.pauseWorkflow(command.workflowId);
+        return { ok: true };
+      }
+      case "worktree.togglePause":
+        this.store.pauseWorkflow(command.workflowId);
+        return { ok: true };
+      case "goal.archive":
+        this.archiveGoal(command.goalId);
+        return { ok: true };
+      case "goal.applyPrecedents":
+        return { ok: true, agentPrompt: `Apply precedents for ${command.goalId}` };
+      case "goal.report":
+        return { ok: true, document: { title: "goal report", lines: ["mock report"] } };
+      case "loop.createDraft": {
+        const id = command.draftId ?? (command.prompt ? `l-${command.prompt.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 24)}` : "l-draft-gh-issues");
+        const seeded = seedLoopDraft(id);
+        this.loopDrafts.set(id, { ...seeded, prompt: command.prompt || seeded.prompt });
+        return { id, ok: true };
+      }
+      case "loop.edit": {
+        const draft = this.getLoopDraft(command.loopId);
+        if (draft) this.loopDrafts.set(command.loopId, { ...draft, prompt: command.text, steps: command.text, trialPassed: false });
+        return { ok: Boolean(draft) };
+      }
+      case "loop.discardDraft":
+        this.loopDrafts.delete(command.loopId);
+        return { ok: true };
+      case "loop.schedule":
+        return this.getLoopDraft(command.loopId)?.trialPassed
+          ? { id: command.loopId, ok: true, message: "Loop scheduled." }
+          : { ok: false, message: "Trial required." };
+      case "worktree.reassign":
+        return { ok: true, agentPrompt: `Reassign ${command.worktreeId}` };
+      case "worktree.testDetails":
+        return { ok: true, document: { title: "test race", lines: ["green"] } };
+      case "session.diff":
+        return { ok: true, agentPrompt: `Show diff for ${command.worktreeId}` };
+      case "session.merge":
+        return { ok: true, agentPrompt: `Merge ${command.worktreeId}` };
+      case "session.steer":
+        return { ok: true, agentPrompt: command.text };
+      case "escalation.ask":
+        return { ok: true, agentPrompt: command.text };
+      case "digest.fullLog":
+        return { ok: true, document: { title: "full activity log", lines: ["mock activity"] } };
+    }
   }
 }

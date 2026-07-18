@@ -55,6 +55,9 @@ export interface Loop {
   costToday?: string;
   lastFired?: string;
   nextRun?: string;
+  /** Durable scheduler cadence and next deadline (never read directly by renderers). */
+  scheduleEveryMs?: number;
+  nextRunAtMs?: number;
 }
 
 /** One numbered option on a 7b escalation card. Exactly one is `recommended`. */
@@ -222,8 +225,8 @@ export interface Session {
  *
  * `signature` matches an {@link Escalation.signature}: a subsequently-seen
  * escalation with the same signature auto-resolves against a non-`declined`
- * precedent. In Phase 4 the store holds these IN MEMORY — the disk-persistence
- * seam is marked in {@link ./store.ts} (TODO: Phase 5/closeout writes to disk).
+ * precedent. Production state persists these per project; mock state remains
+ * intentionally in-memory for deterministic tests and previews.
  */
 export interface Precedent {
   id: string;
@@ -348,9 +351,11 @@ export interface LoopDraft {
   guardrailModel?: LoopGuardrailModel;
   /** The trial statement, e.g. "run once on issue #4307 under full review …". */
   trialStatement: string;
+  /** Durable proof that the current draft definition passed its supervised trial. */
+  trialPassed?: boolean;
 }
 
-/** The 7a trial gate state (app-local view state, keyed by loop id). */
+/** The 7a trial gate view state, seeded from the draft's durable trial result. */
 export type TrialState = "idle" | "trialing" | "passed" | "failed";
 
 /**

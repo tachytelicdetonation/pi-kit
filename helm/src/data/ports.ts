@@ -8,7 +8,7 @@
  * UsageService) — only the port implementations differ. Keeping the surface this
  * small is what lets the conformance contract validate the composition hermetically.
  */
-import type { HelmFooterModel, Session, UsageDetail, Workflow, WorkflowDetail } from "../state/types.js";
+import type { HelmFooterModel, IntakeWorkflowPlan, LoopDraft, Session, UsageDetail, Workflow, WorkflowDetail } from "../state/types.js";
 
 /** The workflow/session backend (dynamic-workflows + claude-cmux, adapted). */
 export interface WorkflowPort {
@@ -20,6 +20,24 @@ export interface WorkflowPort {
   getSession(worktreeId: string): Session | undefined;
   /** Ask the backend to pause a lane (the store also updates optimistically). */
   pauseWorkflow(id: string): void;
+  /** Resume a paused lane. */
+  resumeWorkflow(id: string): Promise<boolean>;
+  /** Pause/resume all live workflow-manager lanes. */
+  pauseAll(): void;
+  resumeAll(): void;
+  /** Launch the real workflow runs that implement a locked goal plan. */
+  startGoal(input: {
+    goalId: string;
+    goalName: string;
+    prompt: string;
+    plan: IntakeWorkflowPlan[];
+  }): Promise<string[]>;
+  /** Execute one supervised loop trial through the workflow manager. */
+  trialLoop(loop: LoopDraft): Promise<{ ok: boolean; runId?: string }>;
+  /** Execute one due scheduled loop and resolve after its workflow verifies. */
+  runLoop(loop: LoopDraft): Promise<{ ok: boolean; runId?: string }>;
+  /** Completion/progress derived from all persisted runs belonging to a Helm goal. */
+  getGoalProgress(goalId: string): { progress: number; complete: boolean } | undefined;
   /** Fire when lanes/agents change (WorkflowManager events); returns unsubscribe. */
   subscribe(callback: () => void): () => void;
 }

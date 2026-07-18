@@ -54,24 +54,26 @@ printable focuses the prompt and types to pi):
 **complete/archived goal** is reached through `/` search (home lists only running
 goals) → its 7d closeout; `n`/`N` push fresh intake / loop-builder drafts.
 
-## Mock-data-backed, with a real-backend seam
+## Runtime architecture
 
 Everything the UI shows comes through one interface — **`DataSource`**
-(`src/data/source.ts`). The shipped implementation is **`MockDataSource`**
-(`src/data/mock.ts`): deterministic, seeded fixtures shaped like the design mocks
-(no timers, no `Date.now` — ages/ETAs/costs are pre-rendered strings, sorted once on
-mutation). Swap in a real backend by implementing `DataSource` and passing it to
-`new HelmApp(tui, theme, done, dataSource, onBell?)`.
+(`src/data/source.ts`). Production uses **`RealDataSource`**: it persists goals,
+drafts, loops, escalations, precedents, journal events, and closeouts per project at
+`~/.pi/agent/helm/projects/<project-hash>/state.json`; projects never share intent.
+Goal launch and supervised loop trials run through the real dynamic-workflows
+`WorkflowManager`. Its persisted runs are projected back into home lanes, drill-in
+worktrees, session activity, receipts, pause/resume state, and goal completion.
+Accepted loop schedules support `every N minutes/hours/days` and `daily at HH:MM`;
+they run through WorkflowManager, persist their next deadline, re-arm on Pi startup,
+and pause after a failed run for operator review.
 
-Seams left explicitly for a real backend (all marked in-code):
+Repository-judgment actions (`d` full diff, `m` merge, `r` reassign, `i` steer, and
+`a` apply precedents) close Helm and hand a scoped request to Pi's normal agent so
+they retain Pi's tools, approvals, and conversational result. Destructive actions
+show an in-Helm `y/n` confirmation first. New needs-you items ring terminal BEL.
 
-- **Precedent persistence** — the store owns precedents in memory; `store.ts` marks
-  the write-through/hydrate point (7b `decide`, 7d `a` apply).
-- **Spawn / schedule** — 6a `g` and 7a `s` are marked stubs where a real source would
-  create the goal + lanes / persist the live loop schedule.
-- **OS notification** — the extension rings a terminal **BEL** on a new needs-you
-  item (`onBell`); an OS notification when the terminal is *unfocused* is out of reach
-  of the extension API and is left deliberately un-faked (see `extensions/helm.ts`).
+`MockDataSource` remains only as deterministic fixture data for tests and previews;
+the installed extension never constructs it.
 
 ## Layout & safety invariants
 
@@ -99,4 +101,5 @@ npm run preview   # render every screen + both footer variants (paused & normal)
 Sources: `src/app.ts` (component + key dispatch), `src/router.ts` (nav stack),
 `src/chrome.ts` (layout primitives), `src/footer.ts` (usage footer), `src/theme.ts`
 (tokens), `src/screens/*` (one renderer per screen), `src/state/*` (store, selectors,
-precedents, types), `src/data/*` (the `DataSource` seam + mock).
+precedents, persistence, types), `src/data/*` (the command boundary, real source,
+and test-only mock), `src/host/adapters.ts` (live workflow and usage projections).

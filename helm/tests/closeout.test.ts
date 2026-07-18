@@ -92,21 +92,24 @@ test("a complete-goal search result opens the 7d closeout", () => {
   assert.match(stripAnsi(app.render(120)[0]), /goal complete · migrate repo to ESM/);
 });
 
-test("`a` applies the precedents (shows a confirmation, stays on the card)", () => {
+test("`a` asks for confirmation before applying precedents", () => {
   const app = new HelmApp(fakeTui(30, 120), theme, () => {});
   intoCloseout(app);
   assert.ok(!strip(app.render(120)).some((l) => l.includes("applied to CLAUDE.md")));
   app.handleInput("a");
   const lines = strip(app.render(120));
-  assert.ok(lines.some((l) => l.includes("applied to CLAUDE.md / skills")), "a confirmation appears");
+  assert.ok(lines.some((l) => l.includes("confirm apply these precedents")), "a confirmation appears");
   assert.match(lines[0], /goal complete/, "still on the closeout card");
 });
 
-test("`x` archives the goal and ascends one hop (back to where it opened)", () => {
+test("`x` confirms, archives the goal, and ascends one hop", async () => {
   const source = new MockDataSource();
   const app = new HelmApp(fakeTui(30, 120), theme, () => {}, source);
   intoCloseout(app); // reached via search → the closeout sits above the search screen
-  app.handleInput("x"); // archive → pop one hop (esc-like), back to the search results
+  app.handleInput("x");
+  assert.equal(source.snapshot().goals.find((g) => g.id === "g-esm")?.phase, "running", "not archived before confirmation");
+  app.handleInput("y");
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(source.snapshot().goals.find((g) => g.id === "g-esm")?.phase, "archived", "the goal is archived");
   assert.doesNotMatch(stripAnsi(app.render(120)[0]), /goal complete/, "left the closeout card");
   // The descend/ascend spine holds: one more esc reaches home, never a dead end.
