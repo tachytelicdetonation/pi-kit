@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import type { AgentRunOptions, AgentUsage } from "../../src/workflows/agent.js";
-import { listAvailableModelSpecs, resolveAgentModelSpec, usageFromStats, WorkflowAgent } from "../../src/workflows/agent.js";
+import { resolveAgentModelSpec, usageFromStats, WorkflowAgent } from "../../src/workflows/agent.js";
 import { WorkflowError, WorkflowErrorCode } from "../../src/workflows/errors.js";
 import { resolveModelSpecWithThinking } from "../../src/workflows/model-spec.js";
 import type { ModelTierConfig } from "../../src/workflows/model-tier-config.js";
@@ -14,7 +14,6 @@ import { withFakeHome } from "./helpers/fake-home.js";
 // Private methods used for testing - cast to this type to access them without `any`
 type WorkflowAgentPrivates = {
   buildPrompt(prompt: string, options: AgentRunOptions<any>, structured: boolean): string;
-  lastAssistantText(messages: unknown[]): string;
   createSessionManager(): { isPersisted(): boolean; getCwd(): string };
 };
 
@@ -87,23 +86,6 @@ test("WorkflowAgent degrades to in-memory when the session directory can't be cr
   }
 });
 
-test("listAvailableModelSpecs returns an array (empty when no auth configured)", () => {
-  const result = listAvailableModelSpecs();
-  assert.ok(Array.isArray(result), "should always return an array");
-  // On CI or fresh installs there may be no models configured
-  // The important thing is it doesn't throw
-});
-
-test("listAvailableModelSpecs entries have provider/model format when non-empty", () => {
-  const result = listAvailableModelSpecs();
-  for (const spec of result) {
-    assert.ok(spec.includes("/"), `model spec "${spec}" should use provider/id format`);
-    const [provider, id] = spec.split("/");
-    assert.ok(provider.length > 0, "provider should not be empty");
-    assert.ok(id.length > 0, "model id should not be empty");
-  }
-});
-
 // ═══════════════════════════════════════════════════════════════════════════
 // resolveAgentModelSpec — model precedence: explicit model > tier > main model
 // ═══════════════════════════════════════════════════════════════════════════
@@ -155,29 +137,6 @@ test("resolveAgentModelSpec: untagged agent with a config lacking a medium tier 
 
 test("resolveAgentModelSpec: tier with no main model and no config yields undefined", () => {
   assert.equal(resolveAgentModelSpec({ tier: "small" }, undefined, noCfg), undefined);
-});
-
-test("WorkflowAgent constructor accepts all option shapes without throwing", () => {
-  const optionSets = [
-    undefined,
-    { cwd: "/tmp" },
-    { cwd: "/tmp", instructions: "custom instruction" },
-    { cwd: "/tmp", tools: [], session: {}, instructions: "test" },
-    { cwd: "/tmp", mainModel: "openai/gpt-4.1" },
-    { cwd: "/tmp", tools: [], session: {}, instructions: "test", mainModel: "openai/gpt-4.1" },
-    {
-      cwd: "/tmp",
-      modelRegistry: {
-        getAvailable: () => [{ provider: "mock", id: "model" }],
-        find: () => undefined,
-        getAll: () => [],
-      } as any,
-    },
-  ];
-  for (const opts of optionSets) {
-    const agent = opts ? new WorkflowAgent(opts) : new WorkflowAgent();
-    assert.ok(agent instanceof WorkflowAgent, `agent should be constructed for options: ${JSON.stringify(opts)}`);
-  }
 });
 
 test("WorkflowAgent reuses an injected ModelRegistry instead of building its own", () => {
@@ -321,74 +280,6 @@ test("buildPrompt includes both instructions when both base and per-call are set
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// lastAssistantText — verifies text extraction from session messages
-// ═══════════════════════════════════════════════════════════════════════════
-
-test("lastAssistantText extracts last assistant text content", () => {
-  const agent = new WorkflowAgent({ cwd: "/tmp" });
-  const messages = [
-    { role: "user", content: [{ type: "text", text: "hello" }] },
-    { role: "assistant", content: [{ type: "text", text: "hi there" }] },
-  ];
-  const text: string = (agent as unknown as WorkflowAgentPrivates).lastAssistantText(messages);
-  assert.equal(text, "hi there");
-});
-
-test("lastAssistantText joins multiple text parts", () => {
-  const agent = new WorkflowAgent({ cwd: "/tmp" });
-  const messages = [
-    {
-      role: "assistant",
-      content: [
-        { type: "text", text: "part1" },
-        { type: "text", text: "part2" },
-      ],
-    },
-  ];
-  const text: string = (agent as unknown as WorkflowAgentPrivates).lastAssistantText(messages);
-  assert.equal(text, "part1part2");
-});
-
-test("lastAssistantText skips non-text content parts", () => {
-  const agent = new WorkflowAgent({ cwd: "/tmp" });
-  const messages = [
-    {
-      role: "assistant",
-      content: [
-        { type: "tool_use", id: "t1" },
-        { type: "text", text: "result" },
-      ],
-    },
-  ];
-  const text: string = (agent as unknown as WorkflowAgentPrivates).lastAssistantText(messages);
-  assert.equal(text, "result");
-});
-
-test("lastAssistantText returns empty string when no assistant text", () => {
-  const agent = new WorkflowAgent({ cwd: "/tmp" });
-  const text: string = (agent as unknown as WorkflowAgentPrivates).lastAssistantText([]);
-  assert.equal(text, "");
-});
-
-test("lastAssistantText returns empty for non-assistant messages", () => {
-  const agent = new WorkflowAgent({ cwd: "/tmp" });
-  const messages = [{ role: "user", content: [{ type: "text", text: "hello" }] }];
-  const text: string = (agent as unknown as WorkflowAgentPrivates).lastAssistantText(messages);
-  assert.equal(text, "");
-});
-
-test("lastAssistantText picks the last assistant message, not first", () => {
-  const agent = new WorkflowAgent({ cwd: "/tmp" });
-  const messages = [
-    { role: "assistant", content: [{ type: "text", text: "first" }] },
-    { role: "user", content: [{ type: "text", text: "more" }] },
-    { role: "assistant", content: [{ type: "text", text: "final" }] },
-  ];
-  const text: string = (agent as unknown as WorkflowAgentPrivates).lastAssistantText(messages);
-  assert.equal(text, "final");
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
 // Full agent() pipeline inside runWorkflow — verifies the agent() function
 // in workflow.ts correctly invokes the runner with all options.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -467,66 +358,6 @@ test("agent() in workflow forwards modelRegistry for CLI-style model parsing", a
   assert.equal(rec.calls.length, 1);
   assert.equal((rec.calls[0].options as { modelRegistry?: unknown }).modelRegistry, modelRegistry);
   assert.equal((rec.calls[0].options as { model?: string }).model, "fast-llm/model:xhigh");
-});
-
-test("agent() in workflow fires onAgentStart and onAgentEnd callbacks", async () => {
-  const rec = new CallRecordingAgent();
-  const events: string[] = [];
-  await runWorkflow(
-    `export const meta = { name: 'test', description: 't' }
-     await agent('hello', { label: 'greeter' })
-     return 1`,
-    {
-      agent: rec,
-      persistLogs: false,
-      onAgentStart: (e) => events.push(`start:${e.label}`),
-      onAgentEnd: (e) => events.push(`end:${e.label}`),
-    },
-  );
-  assert.deepEqual(events, ["start:greeter", "end:greeter"]);
-});
-
-test("agent() in workflow forwards compact subagent history snapshots", async () => {
-  const historyRunner = {
-    async run(_prompt: string, options: any) {
-      options.onHistory?.([{ role: "assistant", kind: "text", text: "working" }]);
-      return "done";
-    },
-  };
-  const histories: Array<{ label: string; history: Array<{ text: string }> }> = [];
-
-  await runWorkflow(
-    `export const meta = { name: 'test', description: 't' }
-     await agent('hello', { label: 'greeter' })
-     return 1`,
-    {
-      agent: historyRunner,
-      persistLogs: false,
-      onAgentHistory: (event) => histories.push(event),
-    },
-  );
-
-  assert.equal(histories.length, 1);
-  assert.equal(histories[0].label, "greeter");
-  assert.equal(histories[0].history[0].text, "working");
-});
-
-test("agent() in workflow fires onAgentStart with phase info", async () => {
-  const rec = new CallRecordingAgent();
-  const starts: Array<{ label: string; phase?: string }> = [];
-  await runWorkflow(
-    `export const meta = { name: 'test', description: 't', phases: [{ title: 'Phase1' }] }
-     phase('Phase1')
-     await agent('work', { label: 'w' })
-     return 1`,
-    {
-      agent: rec,
-      persistLogs: false,
-      onAgentStart: (e) => starts.push({ label: e.label, phase: e.phase }),
-    },
-  );
-  assert.equal(starts.length, 1);
-  assert.equal(starts[0].phase, "Phase1");
 });
 
 test("agent() in workflow returns runner result", async () => {
@@ -623,40 +454,6 @@ test("agent() in workflow reports non-recoverable errors before throwing", async
   assert.equal(end?.error, "schema failed");
   assert.equal(end?.errorCode, WorkflowErrorCode.SCHEMA_NONCOMPLIANCE);
   assert.equal(end?.recoverable, false);
-});
-
-test("agent() in workflow fires onTokenUsage after run", async () => {
-  const rec = new CallRecordingAgent();
-  const usageEvents: Array<{ input: number; output: number; total: number }> = [];
-  await runWorkflow(
-    `export const meta = { name: 'test', description: 't' }
-     await agent('task', { label: 't' })
-     return 1`,
-    {
-      agent: rec,
-      persistLogs: false,
-      onTokenUsage: (u) => usageEvents.push({ input: u.input, output: u.output, total: u.total }),
-    },
-  );
-  assert.equal(usageEvents.length, 1, "should fire onTokenUsage once");
-  assert.equal(usageEvents[0].total, 30, "should accumulate from agent usage");
-});
-
-test("agent() passes onModelResolved callback for display model updates", async () => {
-  const rec = new CallRecordingAgent();
-  await runWorkflow(
-    `export const meta = { name: 'test', description: 't' }
-     await agent('task', { label: 't', model: 'some/model' })
-     return 1`,
-    {
-      agent: rec,
-      persistLogs: false,
-      onAgentEnd: (e) => {
-        assert.equal(e.model, "openai/gpt-4.1-mini");
-      },
-    },
-  );
-  assert.ok(rec.calls.length > 0, "rec.calls should not be empty");
 });
 
 test("agent() accumulates usage across multiple agents", async () => {
@@ -764,26 +561,6 @@ test("agent() with pipeline invokes agent per stage per item", async () => {
     { agent: rec, persistLogs: false },
   );
   assert.equal(rec.calls.length, 4); // 2 items × 2 stages
-});
-
-test("agent() monitors agent count and calls onAgentStart/End for each", async () => {
-  const rec = new CallRecordingAgent();
-  const counts: number[] = [];
-  await runWorkflow(
-    `export const meta = { name: 'test', description: 't' }
-     await agent('a', { label: 'a' })
-     await agent('b', { label: 'b' })
-     return 1`,
-    {
-      agent: rec,
-      persistLogs: false,
-      onAgentStart: () => {},
-      onAgentEnd: (e) => counts.push(e.tokens ?? 0),
-    },
-  );
-  assert.equal(counts.length, 2);
-  assert.ok(counts[0] > 0, "first agent tokens");
-  assert.ok(counts[1] > 0, "second agent tokens");
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

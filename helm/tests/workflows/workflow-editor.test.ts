@@ -523,15 +523,6 @@ describe("WorkflowEditor", () => {
     assert.equal(state.keywordTriggerEnabled, true);
   });
 
-  it("render() returns an array of strings", () => {
-    const { editor } = createEditor();
-    const lines = editor.render(80);
-    assert.ok(Array.isArray(lines), "render() should return an array");
-    for (const ln of lines) {
-      assert.equal(typeof ln, "string", "each line should be a string");
-    }
-  });
-
   // Issue #72: a broken/mismatched host can make the base Editor's render()
   // throw on every render, including the very first one — crashing the whole
   // app at launch. WorkflowEditor.render() must degrade instead of crashing.

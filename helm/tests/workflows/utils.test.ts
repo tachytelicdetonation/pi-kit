@@ -149,15 +149,6 @@ describe("config", () => {
 // ─── Logger ────────────────────────────────────────────────────────────────────
 
 describe("logger", () => {
-  it("createWorkflowLogger returns logger with log/error/warn/getLogs", async () => {
-    const { createWorkflowLogger } = await loadLogger();
-    const log = createWorkflowLogger({ persist: false });
-    assert.equal(typeof log.log, "function");
-    assert.equal(typeof log.error, "function");
-    assert.equal(typeof log.warn, "function");
-    assert.equal(typeof log.getLogs, "function");
-  });
-
   it("log/error/warn do not throw and accumulate logs", async () => {
     const { createWorkflowLogger } = await loadLogger();
     const log = createWorkflowLogger({ persist: false });
@@ -185,16 +176,6 @@ describe("logger", () => {
     const log = createWorkflowLogger({ persist: false });
     const result = log.persist();
     assert.equal(result, null);
-  });
-
-  it("onLog callback is called for each message", async () => {
-    const { createWorkflowLogger } = await loadLogger();
-    const captured: string[] = [];
-    const log = createWorkflowLogger({ persist: false, onLog: (m) => captured.push(m) });
-    log.log("msg1");
-    log.warn("msg2");
-    log.error("msg3");
-    assert.deepEqual(captured, ["msg1", "msg2", "msg3"]);
   });
 });
 

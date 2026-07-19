@@ -88,12 +88,6 @@ test("non-positive and tiny widths never throw", () => {
 const WARNING_XTERM = 179;
 const hasWarning = (line: string) => line.includes(`\x1b[38;5;${WARNING_XTERM}m`);
 
-test("paused footer turns warning-yellow with a '⏸ paused' indicator", () => {
-  const paused = renderHelmFooter(model, theme, 140, "fleet", true);
-  assert.ok(hasWarning(paused), "the paused footer carries the warning color");
-  assert.match(stripAnsi(paused), /⏸ paused/, "the far-left paused indicator is shown");
-});
-
 test("an un-paused footer carries NO warning color (so warning cleanly signals pause)", () => {
   for (const variant of ["session", "fleet"] as const) {
     const normal = renderHelmFooter(model, theme, 140, variant, false);

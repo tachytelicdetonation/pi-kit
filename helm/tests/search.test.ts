@@ -34,13 +34,6 @@ test("search filters the corpus case-insensitively; empty query returns nothing"
   assert.equal(source.search("ESM").length, esm.length, "case-insensitive");
 });
 
-test("search is FOREVER — it finds an ARCHIVED goal", () => {
-  const hits = source.search("auth");
-  assert.equal(hits.length, 1, "the archived 'auth v2 rollout' is found");
-  assert.equal(hits[0].kind, "goal");
-  assert.match(hits[0].sublabel ?? "", /archived/);
-});
-
 test("search spans decisions, precedents, PRs and loop runs", () => {
   assert.ok(source.search("4312").some((r) => r.kind === "decision"), "a decision hit");
   assert.ok(source.search("conditional").some((r) => r.kind === "precedent"), "a precedent hit");

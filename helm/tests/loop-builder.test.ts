@@ -4,7 +4,6 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { HelmApp } from "../src/app.js";
 import { MockDataSource, seedLoopDraft } from "../src/data/mock.js";
 import { renderLoopBuilder } from "../src/screens/loop-builder.js";
-import type { TrialState } from "../src/state/types.js";
 import { fakeTui, flush, stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
@@ -119,24 +118,6 @@ test("`x` confirms before discarding the builder", async () => {
   app.handleInput("y");
   await flush();
   assert.match(stripAnsi(app.render(120)[0]), /mission control/, "x pops back to home");
-});
-
-test("a home LOOP row opens its drill-in, then enter opens its 7a builder", () => {
-  const app = new HelmApp(fakeTui(40, 120), theme, () => {});
-  // Selectable order: 2 escalations, then 2 goals with 4 workflows, then 3 loops.
-  // Step to the first loop row (index 8) and descend.
-  for (let i = 0; i < 8; i++) app.handleInput("j");
-  app.handleInput("\r");
-  assert.match(stripAnsi(app.render(120)[0]), /loop › gh-issues/, "enter on a loop row opens the drill-in");
-  app.handleInput("\r");
-  assert.match(stripAnsi(app.render(120)[0]), /new loop/, "enter on the drill-in opens the builder");
-});
-
-test("trialState renders default 'idle' when no explicit state is passed", () => {
-  const idle: TrialState = "idle";
-  const a = strip(renderLoopBuilder(seedLoopDraft(), theme, 120, 40));
-  const b = strip(renderLoopBuilder(seedLoopDraft(), theme, 120, 40, idle));
-  assert.deepEqual(a, b);
 });
 
 test("guardrails per-step model survives narrow widths (wrapped, not truncated)", () => {

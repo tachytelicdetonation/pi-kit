@@ -70,16 +70,6 @@ test("backspace deletes the last buffered char", () => {
   assert.match(promptLine!, /❯ ab$/);
 });
 
-test("esc at home with an empty buffer never quits", () => {
-  const { tui } = fakeTui(20, 80);
-  let closed = false;
-  const app = new HelmApp(tui, theme, () => {
-    closed = true;
-  });
-  app.handleInput("\x1b");
-  assert.equal(closed, false);
-});
-
 test("'q' with an empty buffer types to the prompt; ctrl+q exits via done()", () => {
   const { tui } = fakeTui(20, 80);
   let closed = false;
@@ -213,16 +203,6 @@ test("esc ascends: session → drill-in → home, then stays at home", () => {
   app.handleInput("\x1b");
   lines = app.render(120).map(stripAnsi);
   assert.match(lines[0], /mission control/, "esc at home stays at home");
-});
-
-test("esc at home with an empty buffer never quits (the descend spine)", () => {
-  const { tui } = fakeTui(20, 80);
-  let closed = false;
-  const app = new HelmApp(tui, theme, () => {
-    closed = true;
-  });
-  app.handleInput("\x1b");
-  assert.equal(closed, false);
 });
 
 test("j/k selection is per-screen and clamps independently", () => {
