@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { parseClaudeUsagePayload } from "../../src/usage/providers/claude.js";
@@ -70,7 +70,7 @@ test("Claude parser keeps active core and model-scoped windows", () => {
 });
 
 test("Kimi OAuth refresh uses the shared lock and atomically rotates expired credentials", async () => {
-  const home = await mkdtemp(join(tmpdir(), "usage-health-kimi-"));
+  const home = tempDir("usage-health-kimi-");
   const paths = resolveUsagePaths({ HOME: home, KIMI_CODE_HOME: join(home, ".kimi-code") });
   const credentialPath = join(paths.kimiDir, "credentials", "kimi-code.json");
   await mkdir(join(paths.kimiDir, "credentials"), { recursive: true });
@@ -109,7 +109,7 @@ test("Kimi OAuth refresh uses the shared lock and atomically rotates expired cre
     assert.equal(saved.expires_at, Math.floor(NOW / 1000) + 3600);
     await assert.rejects(access(join(paths.kimiDir, "oauth", "kimi-code.lock")));
   } finally {
-    await rm(home, { recursive: true, force: true });
+    removeTempDir(home);
   }
 });
 

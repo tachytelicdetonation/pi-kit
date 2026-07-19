@@ -5,9 +5,9 @@ import { renderMissionControl } from "../src/screens/mission-control.js";
 import { seedState } from "../src/data/mock.js";
 import { selectableCount } from "../src/state/selectors.js";
 import type { HelmState } from "../src/state/types.js";
+import { stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
 const strip = (lines: string[]) => lines.map(stripAnsi);
 
 /** Index of the currently-highlighted row (marked with the ▌ gutter glyph). */

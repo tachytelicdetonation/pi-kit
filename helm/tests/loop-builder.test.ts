@@ -1,21 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { HelmApp, type TuiLike } from "../src/app.js";
+import { HelmApp } from "../src/app.js";
 import { MockDataSource, seedLoopDraft } from "../src/data/mock.js";
 import { renderLoopBuilder } from "../src/screens/loop-builder.js";
 import type { TrialState } from "../src/state/types.js";
+import { fakeTui, flush, stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
 const strip = (lines: string[]) => lines.map(stripAnsi);
 const XTERM = { purple: 141, success: 78, error: 203 };
 const hasColor = (line: string, xterm: number) => line.includes(`\x1b[38;5;${xterm}m`);
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-function fakeTui(rows: number, columns: number): TuiLike {
-  return { terminal: { rows, columns }, requestRender() {} };
-}
 
 /** A MockDataSource whose trial always FAILS (for the failed-trial path). */
 class FailingTrialSource extends MockDataSource {

@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { StateStore } from "../../src/cmux/state-store.js";
@@ -22,7 +22,7 @@ const run: ManagedSession = {
 };
 
 test("state store atomically round-trips managed sessions", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "claude-cmux-state-"));
+  const directory = tempDir("claude-cmux-state-");
   const path = join(directory, "nested", "state.json");
   try {
     const store = new StateStore(path);
@@ -30,7 +30,7 @@ test("state store atomically round-trips managed sessions", async () => {
     assert.deepEqual(await store.load(), [run]);
     assert.match(await readFile(path, "utf8"), /"version": 1/);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    removeTempDir(directory);
   }
 });
 

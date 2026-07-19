@@ -1,19 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { HelmApp, type TuiLike } from "../src/app.js";
+import { HelmApp } from "../src/app.js";
 import { MockDataSource, seedExportMapEscalation } from "../src/data/mock.js";
 import { renderEscalation } from "../src/screens/escalation.js";
+import { fakeTui, flush, stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
 const strip = (lines: string[]) => lines.map(stripAnsi);
 const XTERM = { success: 78, error: 203, brand: 111, warning: 179 };
 const hasColor = (line: string, xterm: number) => line.includes(`\x1b[38;5;${xterm}m`);
 
-function fakeTui(rows: number, columns: number): TuiLike {
-  return { terminal: { rows, columns }, requestRender() {} };
-}
 
 // ── render safety ───────────────────────────────────────────────────────────
 for (const width of [120, 90, 70, 40, 12, 1]) {
@@ -112,7 +109,6 @@ test("'[' / ']' cycle prev/next escalation IN PLACE (stack stays [home, card])",
 
 // The card advance after a decision awaits the (possibly async) DataSource, so
 // flush pending microtasks before asserting the post-decide stack/render.
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 test("'1'-'9' decides the Nth option, recording a precedent with the right decision", async () => {
   const source = new MockDataSource();

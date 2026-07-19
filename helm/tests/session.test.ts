@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { HelmApp, type TuiLike } from "../src/app.js";
+import { HelmApp } from "../src/app.js";
 import { MockDataSource, seedSession } from "../src/data/mock.js";
 import { renderSession } from "../src/screens/session.js";
+import { fakeTui, stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
 const strip = (lines: string[]) => lines.map(stripAnsi);
 const NONE = new Set<number>();
 
@@ -78,7 +78,7 @@ test("the ▌ marker stays visible when the selected activity line is below the 
 
 test("the header receipts render ✓ build ✓ lint ✓ N tests", () => {
   // Receipts live in the app header; drive the session via HelmApp routing.
-  const tui: TuiLike = { terminal: { rows: 30, columns: 120 }, requestRender() {} };
+  const tui = fakeTui(30, 120);
   const source = new MockDataSource();
   const app = new HelmApp(tui, theme, () => {}, source);
   app.handleInput("j"); // move onto the first workflow
@@ -98,7 +98,7 @@ test("the turn ends with a claim + 'review diff d · merge m' actions", () => {
 });
 
 test("the session footer variant shows ctx (session), not burn (fleet)", () => {
-  const tui: TuiLike = { terminal: { rows: 30, columns: 120 }, requestRender() {} };
+  const tui = fakeTui(30, 120);
   const app = new HelmApp(tui, theme, () => {});
   app.handleInput("j");
   app.handleInput("j");

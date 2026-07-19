@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
 import type { ExtensionAPI, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { buildForcedWorkflowPrompt, WORKFLOW_TOOL_NAME, type WorkflowModeState } from "../../src/workflows/workflow-editor.js";
+import { makeEventPi as createMockPi, type EventPi as MockPi } from "./helpers/mock-pi.js";
 
 // ---------------------------------------------------------------------------
 // Default Pi tools that every Pi install provides (plugin-independent)
@@ -43,26 +44,6 @@ const DEFAULT_PI_TOOLS = [
 // ---------------------------------------------------------------------------
 // Mock helpers
 // ---------------------------------------------------------------------------
-
-interface MockPi {
-  on: ReturnType<typeof mock.fn>;
-  getActiveTools: ReturnType<typeof mock.fn>;
-  setActiveTools: ReturnType<typeof mock.fn>;
-  handlers: Record<string, Array<(...args: any[]) => any>>;
-}
-
-function createMockPi(initialTools: string[] = [...DEFAULT_PI_TOOLS]): MockPi {
-  const handlers: Record<string, Array<(...args: any[]) => any>> = {};
-  return {
-    on: mock.fn((event: string, handler: (...args: any[]) => any) => {
-      if (!handlers[event]) handlers[event] = [];
-      handlers[event].push(handler);
-    }),
-    getActiveTools: mock.fn(() => [...initialTools]),
-    setActiveTools: mock.fn(),
-    handlers,
-  };
-}
 
 function testSettingsOptions(keywordTriggerEnabled = true, keywordTriggerWord?: string) {
   return {
@@ -183,7 +164,7 @@ describe("installWorkflowEditor - tool availability", () => {
   it("should fire for a configured trigger word but not the default word", async () => {
     const { installWorkflowEditor } = await import("../../src/workflows/workflow-editor.js");
 
-    const mockPi = createMockPi();
+    const mockPi = createMockPi(DEFAULT_PI_TOOLS);
     const ui = {
       setEditorComponent: mock.fn(),
     };
@@ -207,7 +188,7 @@ describe("installWorkflowEditor - tool availability", () => {
   it('should not fire for "/workflows" (slash command, not trigger)', async () => {
     const { installWorkflowEditor } = await import("../../src/workflows/workflow-editor.js");
 
-    const mockPi = createMockPi();
+    const mockPi = createMockPi(DEFAULT_PI_TOOLS);
 
     const ui = {
       setEditorComponent: mock.fn(),
@@ -237,7 +218,7 @@ describe("installWorkflowEditor - tool availability", () => {
   it("should not fire for non-interactive sources", async () => {
     const { installWorkflowEditor } = await import("../../src/workflows/workflow-editor.js");
 
-    const mockPi = createMockPi();
+    const mockPi = createMockPi(DEFAULT_PI_TOOLS);
 
     const ui = {
       setEditorComponent: mock.fn(),
@@ -263,7 +244,7 @@ describe("installWorkflowEditor - tool availability", () => {
   it("should not fire for empty text", async () => {
     const { installWorkflowEditor } = await import("../../src/workflows/workflow-editor.js");
 
-    const mockPi = createMockPi();
+    const mockPi = createMockPi(DEFAULT_PI_TOOLS);
 
     const ui = {
       setEditorComponent: mock.fn(),
@@ -290,7 +271,7 @@ describe("installWorkflowEditor - tool availability", () => {
     const { installWorkflowEditor } = await import("../../src/workflows/workflow-editor.js");
 
     // Pi may not have getActiveTools in some hosts
-    const mockPi = createMockPi();
+    const mockPi = createMockPi(DEFAULT_PI_TOOLS);
     mockPi.getActiveTools = mock.fn(() => undefined as unknown as string[]);
 
     const ui = {
@@ -316,7 +297,7 @@ describe("installWorkflowEditor - tool availability", () => {
   it("should handle setActiveTools throwing gracefully (best-effort)", async () => {
     const { installWorkflowEditor } = await import("../../src/workflows/workflow-editor.js");
 
-    const mockPi = createMockPi();
+    const mockPi = createMockPi(DEFAULT_PI_TOOLS);
     mockPi.setActiveTools = mock.fn(() => {
       throw new Error("host rejected tool restriction");
     });
@@ -390,7 +371,7 @@ describe("installWorkflowEditor - tool availability", () => {
     const { installWorkflowEditor } = await import("../../src/workflows/workflow-editor.js");
 
     for (const keyword of ["workflow", "workflows", "WORKFLOW", "WorkFlows"]) {
-      const mockPi = createMockPi();
+      const mockPi = createMockPi(DEFAULT_PI_TOOLS);
       const ui = { setEditorComponent: mock.fn() };
       installWorkflowEditor(
         mockPi as unknown as ExtensionAPI,
@@ -417,7 +398,7 @@ describe("installWorkflowEditor - tool availability", () => {
   it("should set editor component", async () => {
     const { installWorkflowEditor } = await import("../../src/workflows/workflow-editor.js");
 
-    const mockPi = createMockPi();
+    const mockPi = createMockPi(DEFAULT_PI_TOOLS);
     const setEditorComponent = mock.fn();
     const ui = { setEditorComponent };
 
@@ -436,7 +417,7 @@ describe("installWorkflowEditor - tool availability", () => {
   it("should return correct WorkflowModeState", async () => {
     const { installWorkflowEditor } = await import("../../src/workflows/workflow-editor.js");
 
-    const mockPi = createMockPi();
+    const mockPi = createMockPi(DEFAULT_PI_TOOLS);
     const ui = { setEditorComponent: mock.fn() };
 
     const state: WorkflowModeState = installWorkflowEditor(

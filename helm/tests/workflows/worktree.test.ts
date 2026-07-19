@@ -1,7 +1,7 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { createWorktree as createWorktreeLive, removeWorktree } from "../../src/workflows/worktree.js";
@@ -9,19 +9,19 @@ import { createWorktree as createWorktreeLive, removeWorktree } from "../../src/
 // ── Existing tests (unchanged) ──
 
 test("createWorktree no-ops (not isolated) outside a git repo", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-wt-nogit-"));
+  const dir = tempDir("pi-wt-nogit-");
   try {
     const wt = await createWorktreeLive(dir, "run-1-0-task");
     assert.equal(wt.isolated, false);
     assert.equal(wt.cwd, dir);
     assert.match(wt.reason ?? "", /not a git repository/);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   }
 });
 
 test("createWorktree isolates in a git repo, then removeWorktree cleans up", async () => {
-  const repo = mkdtempSync(join(tmpdir(), "pi-wt-git-"));
+  const repo = tempDir("pi-wt-git-");
   const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { stdio: "pipe" });
   try {
     git("init", "-q");
@@ -45,14 +45,14 @@ test("createWorktree isolates in a git repo, then removeWorktree cleans up", asy
     const branches = execFileSync("git", ["-C", repo, "branch", "--list", wt.branch ?? ""], { encoding: "utf8" });
     assert.equal(branches.trim(), "", "branch deleted");
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    removeTempDir(repo);
   }
 });
 
 // ── NEW TESTS ──
 
 test("createWorktree falls back when git fails (non-git directory)", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-wt-noexec-"));
+  const dir = tempDir("pi-wt-noexec-");
   try {
     const wt = await createWorktreeLive(dir, "run-1-0-task");
 
@@ -60,12 +60,12 @@ test("createWorktree falls back when git fails (non-git directory)", async () =>
     assert.equal(wt.cwd, dir);
     assert.ok(wt.reason, "should provide a fallback reason when git fails");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   }
 });
 
 test("removeWorktree does not throw when worktree directory is already missing", async () => {
-  const repo = mkdtempSync(join(tmpdir(), "pi-wt-missing-"));
+  const repo = tempDir("pi-wt-missing-");
   const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { stdio: "pipe" });
   try {
     git("init", "-q");
@@ -79,18 +79,18 @@ test("removeWorktree does not throw when worktree directory is already missing",
     assert.equal(wt.isolated, true);
 
     // Remove the worktree directory so git worktree remove --force fails
-    rmSync(wt.cwd, { recursive: true, force: true });
+    removeTempDir(wt.cwd);
     assert.ok(!existsSync(wt.cwd), "worktree dir removed manually before removeWorktree");
 
     // removeWorktree must not throw despite git commands failing
     await assert.doesNotReject(removeWorktree(wt));
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    removeTempDir(repo);
   }
 });
 
 test("createWorktree falls back when target branch already exists", async () => {
-  const repo = mkdtempSync(join(tmpdir(), "pi-wt-conflict-"));
+  const repo = tempDir("pi-wt-conflict-");
   const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { stdio: "pipe" });
   try {
     git("init", "-q");
@@ -111,12 +111,12 @@ test("createWorktree falls back when target branch already exists", async () => 
     assert.equal(wt.cwd, repo);
     assert.ok(/already exists/i.test(wt.reason ?? ""), `Expected 'already exists' error, got: ${wt.reason}`);
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    removeTempDir(repo);
   }
 });
 
 test("removeWorktree does not throw when git operations fail (corrupted metadata)", async () => {
-  const repo = mkdtempSync(join(tmpdir(), "pi-wt-failrm-"));
+  const repo = tempDir("pi-wt-failrm-");
   const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { stdio: "pipe" });
   try {
     git("init", "-q");
@@ -130,7 +130,7 @@ test("removeWorktree does not throw when git operations fail (corrupted metadata
     assert.equal(wt.isolated, true);
 
     // Remove worktree dir so git worktree remove fails
-    rmSync(wt.cwd, { recursive: true, force: true });
+    removeTempDir(wt.cwd);
 
     // Corrupt git worktree metadata so git worktree remove --force also fails
     const branchSuffix = wt.branch?.replace("pi/wf/", "") ?? "";
@@ -142,6 +142,6 @@ test("removeWorktree does not throw when git operations fail (corrupted metadata
     // Both git operations should fail silently — no throw from removeWorktree
     await assert.doesNotReject(removeWorktree(wt));
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    removeTempDir(repo);
   }
 });

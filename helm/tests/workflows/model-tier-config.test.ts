@@ -1,3 +1,4 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 /**
  * Tests for model-tier-config.ts
  *
@@ -14,7 +15,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -379,13 +380,13 @@ describe("model-tier-config", () => {
   describe("loadModelTierConfig / saveModelTierConfig (scoped to tmpdir)", () => {
     it("round-trips a valid config through disk", async () => {
       const { loadModelTierConfig, saveModelTierConfig } = await loadModule();
-      const tmpDir = mkdtempSync(join(tmpdir(), "mtc-test-"));
+      const tmpDir = tempDir("mtc-test-");
       const cfgPath = join(tmpDir, "model-tiers.json");
       const config = { tiers: { small: "gpt-4.1-mini", medium: "gpt-4.1", big: "gpt-5" } };
       saveModelTierConfig(config, cfgPath);
       const loaded = loadModelTierConfig(cfgPath);
       assert.deepEqual(loaded, config);
-      rmSync(tmpDir, { recursive: true, force: true });
+      removeTempDir(tmpDir);
     });
 
     it("returns null when file does not exist", async () => {
@@ -395,48 +396,48 @@ describe("model-tier-config", () => {
 
     it("returns null for corrupted JSON", async () => {
       const { loadModelTierConfig } = await loadModule();
-      const tmpDir = mkdtempSync(join(tmpdir(), "mtc-test-"));
+      const tmpDir = tempDir("mtc-test-");
       const cfgPath = join(tmpDir, "model-tiers.json");
       writeFileSync(cfgPath, "{invalid json", "utf-8");
       assert.equal(loadModelTierConfig(cfgPath), null);
-      rmSync(tmpDir, { recursive: true, force: true });
+      removeTempDir(tmpDir);
     });
 
     it("returns null for non-object JSON", async () => {
       const { loadModelTierConfig } = await loadModule();
-      const tmpDir = mkdtempSync(join(tmpdir(), "mtc-test-"));
+      const tmpDir = tempDir("mtc-test-");
       const cfgPath = join(tmpDir, "model-tiers.json");
       writeFileSync(cfgPath, '"just a string"', "utf-8");
       assert.equal(loadModelTierConfig(cfgPath), null);
-      rmSync(tmpDir, { recursive: true, force: true });
+      removeTempDir(tmpDir);
     });
 
     it("returns null when tiers is not an object", async () => {
       const { loadModelTierConfig } = await loadModule();
-      const tmpDir = mkdtempSync(join(tmpdir(), "mtc-test-"));
+      const tmpDir = tempDir("mtc-test-");
       const cfgPath = join(tmpDir, "model-tiers.json");
       writeFileSync(cfgPath, '{"tiers": "not-an-object"}', "utf-8");
       assert.equal(loadModelTierConfig(cfgPath), null);
-      rmSync(tmpDir, { recursive: true, force: true });
+      removeTempDir(tmpDir);
     });
 
     it("returns null when a tier value is not a string", async () => {
       const { loadModelTierConfig } = await loadModule();
-      const tmpDir = mkdtempSync(join(tmpdir(), "mtc-test-"));
+      const tmpDir = tempDir("mtc-test-");
       const cfgPath = join(tmpDir, "model-tiers.json");
       writeFileSync(cfgPath, '{"tiers": {"small": ["gpt-4.1-mini"]}}', "utf-8");
       assert.equal(loadModelTierConfig(cfgPath), null, "array values should be rejected");
-      rmSync(tmpDir, { recursive: true, force: true });
+      removeTempDir(tmpDir);
     });
 
     it("accepts a config where a tier value is a valid string", async () => {
       const { loadModelTierConfig } = await loadModule();
-      const tmpDir = mkdtempSync(join(tmpdir(), "mtc-test-"));
+      const tmpDir = tempDir("mtc-test-");
       const cfgPath = join(tmpDir, "model-tiers.json");
       writeFileSync(cfgPath, '{"tiers": {"small": "gpt-4.1-mini"}}', "utf-8");
       const result = loadModelTierConfig(cfgPath);
       assert.equal(result?.tiers.small, "gpt-4.1-mini");
-      rmSync(tmpDir, { recursive: true, force: true });
+      removeTempDir(tmpDir);
     });
   });
 

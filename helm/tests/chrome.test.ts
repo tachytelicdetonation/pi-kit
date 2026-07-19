@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { column, divider, header, spring, treePrefix, windowLines } from "../src/chrome.js";
+import { stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
 
 for (const width of [120, 90, 70, 40, 10, 1, 0]) {
   test(`spring never exceeds ${width}`, () => {

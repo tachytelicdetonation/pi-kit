@@ -709,25 +709,26 @@ describe("deliverText", () => {
     assert.ok(text.includes("finished"), "should include finished message");
   });
 
-  it("includes token count when available", async () => {
+  it("formats completion metrics as exact segments", async () => {
     const { deliverText } = await loadTaskPanel();
-    const text = deliverText(fakeManagedRun());
-    assert.ok(text.includes("150"), "should show the token count");
-    assert.ok(text.includes("tok"), "should label the token count");
-  });
+    const cases = [
+      {
+        label: "agents, tokens, cost, and duration",
+        run: fakeManagedRun(),
+        expected: ["5 agents", "150 tok", "$0.0030", "12.3s"],
+      },
+      {
+        label: "metrics omitted when absent",
+        run: fakeManagedRun({ result: { result: { verdict: "done" }, agentCount: 2 } }),
+        expected: ["2 agents"],
+      },
+    ];
 
-  it("includes agent count", async () => {
-    const { deliverText } = await loadTaskPanel();
-    const text = deliverText(fakeManagedRun());
-    assert.ok(text.includes("5"), "should show 5 agents");
-    assert.ok(text.includes("agents"), "should mention agents");
-  });
-
-  it("includes duration in seconds", async () => {
-    const { deliverText } = await loadTaskPanel();
-    const text = deliverText(fakeManagedRun());
-    assert.ok(text.includes("12.3"), "should show duration in seconds");
-    assert.ok(text.includes("s"), "should show unit");
+    for (const { label, run, expected } of cases) {
+      const firstLine = deliverText(run).split("\n", 1)[0];
+      const metrics = firstLine.match(/finished \((.*)\)\.$/)?.[1].split(" · ");
+      assert.deepEqual(metrics, expected, label);
+    }
   });
 
   it("starts with checkmark and workflow name", async () => {

@@ -1,7 +1,7 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { ClaudeFleetManager } from "../../src/cmux/fleet-manager.js";
@@ -61,7 +61,7 @@ test("duplicate sweep terminates the twin and keeps the bound pid", async () => 
 
 test("orphan sweep kills a dead-owner instance's claude but spares a live-owner peer", async () => {
   const audits: any[] = [];
-  const root = await mkdtemp(join(tmpdir(), "sweep-inst-"));
+  const root = tempDir("sweep-inst-");
   const orphanSession = "SWEEP-ORPH-0002";
   const peerSession = "SWEEP-LIVE-0003";
   const orphanPid = await spawnClaude(orphanSession);
@@ -85,13 +85,13 @@ test("orphan sweep kills a dead-owner instance's claude but spares a live-owner 
     assert.ok(audits.some((a) => a.event === "orphan.terminated" && a.data?.pids?.includes(orphanPid)));
   } finally {
     for (const p of [orphanPid, peerPid]) try { process.kill(p, "SIGKILL"); } catch {}
-    await rm(root, { recursive: true, force: true });
+    removeTempDir(root);
   }
 });
 
 test("orphan sweep does not sweep an instance with a missing owner.pid (fail safe)", async () => {
   const audits: any[] = [];
-  const root = await mkdtemp(join(tmpdir(), "sweep-noowner-"));
+  const root = tempDir("sweep-noowner-");
   const sessionId = "SWEEP-NOOWNER-0004";
   const pid = await spawnClaude(sessionId);
   try {
@@ -105,6 +105,6 @@ test("orphan sweep does not sweep an instance with a missing owner.pid (fail saf
     assert.equal(isProcessAlive(pid), true, "missing owner.pid must NOT trigger a sweep");
   } finally {
     try { process.kill(pid, "SIGKILL"); } catch {}
-    await rm(root, { recursive: true, force: true });
+    removeTempDir(root);
   }
 });

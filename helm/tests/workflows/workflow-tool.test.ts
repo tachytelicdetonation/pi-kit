@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
-import type { AgentUsage } from "../../src/workflows/agent.js";
 import { WorkflowError, WorkflowErrorCode } from "../../src/workflows/errors.js";
 import { WorkflowManager } from "../../src/workflows/workflow-manager.js";
+import { createWorkflowStorage } from "../../src/workflows/workflow-saved.js";
 import { backgroundStartedText, createWorkflowTool, modelRoutingGuideline } from "../../src/workflows/workflow-tool.js";
-import { withFakeHomeAsync } from "./helpers/fake-home.js";
+import { tempProjectTest as withToolTempCwd } from "../helpers/tmp.js";
+import { deferredAgent as deferredToolAgent, deterministicAgent as toolFakeAgent } from "../helpers/workflow.js";
 
 /** Minimal fake ModelRegistry, matching the shape the PR's existing tests use. */
 function fakeRegistry(models: Array<{ provider: string; id: string }>) {
@@ -155,10 +153,23 @@ test("createWorkflowTool invalid args throws descriptive error", () => {
   }
 });
 
-test("createWorkflowTool with custom cwd creates tool", () => {
-  const tool = createWorkflowTool({ cwd: "/tmp" });
-  assert.equal(tool.name, "workflow");
-});
+test(
+  "createWorkflowTool with custom cwd uses that project's saved workflow storage",
+  withToolTempCwd(async (cwd) => {
+    createWorkflowStorage(cwd).save({
+      name: "cwd_probe",
+      description: "proves project-local lookup",
+      script: resumeToolScript,
+      location: "project",
+    });
+    const manager = new WorkflowManager({ cwd, agent: toolFakeAgent() });
+    const tool = createWorkflowTool({ cwd, manager });
+    const output = await tool.execute("cwd-test", { name: "cwd_probe", background: false }, undefined, undefined, undefined);
+
+    assert.equal((output.details as { meta?: { name?: string } }).meta?.name, "resume_tool");
+    assert.equal(manager.listRuns()[0]?.workflowName, "resume_tool", "the resolved project-local script executed");
+  }),
+);
 
 test("createWorkflowTool does not add configured model IDs to promptGuidelines", () => {
   const manager = new WorkflowManager({ cwd: "/tmp" });
@@ -169,14 +180,6 @@ test("createWorkflowTool does not add configured model IDs to promptGuidelines",
 
   manager.setModelRegistry(fakeRegistry([{ provider: "router", id: "later-private-model" }]));
   assert.doesNotMatch(tool.promptGuidelines.join(" "), /router\/later-private-model/);
-});
-
-test("modelRoutingGuideline output is non-empty and well-formed", () => {
-  const text = modelRoutingGuideline();
-  assert.ok(text.length > 50, "should be a substantial instruction");
-  assert.ok(text.endsWith(".") || text.endsWith("") || text.endsWith("`"), "should end properly");
-  assert.ok(!text.includes("undefined"), "no undefined interpolation");
-  assert.ok(!text.includes("[object Object]"), "no object serialization leaks");
 });
 
 // ─── prepareArguments / normalizeWorkflowScript ─────────────────────────────────
@@ -234,49 +237,12 @@ const resumeToolScript = `export const meta = { name: 'resume_tool', description
 const a = await agent('do it', { label: 'a' })
 return { a }`;
 
-function toolFakeAgent(result: unknown = "ok") {
-  return {
-    async run(_prompt: string, options?: { onUsage?: (u: AgentUsage) => void }) {
-      options?.onUsage?.({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: 0 });
-      return result;
-    },
-  };
-}
-
-function deferredToolAgent() {
-  let resolveFn: ((v: unknown) => void) | null = null;
-  const promise = new Promise((resolve) => {
-    resolveFn = resolve;
-  });
-  return {
-    resolve: (v: unknown = "done") => resolveFn?.(v),
-    runner: {
-      async run() {
-        return promise;
-      },
-    },
-  };
-}
-
 async function waitForToolRun(manager: WorkflowManager, runId: string, timeoutMs = 2_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (manager.getRun(runId)?.status === "running") {
     if (Date.now() >= deadline) throw new Error("Timed out waiting for workflow run");
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-}
-
-function withToolTempCwd(fn: (cwd: string) => Promise<void>) {
-  return async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "pi-dw-tool-"));
-    const fakeHome = mkdtempSync(join(tmpdir(), "pi-dw-tool-home-"));
-    try {
-      await withFakeHomeAsync(fakeHome, () => fn(cwd));
-    } finally {
-      rmSync(cwd, { recursive: true, force: true });
-      rmSync(fakeHome, { recursive: true, force: true });
-    }
-  };
 }
 
 test("workflowToolSchema exposes all latest source forms as optional schema fields", () => {

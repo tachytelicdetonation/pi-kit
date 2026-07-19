@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { CustomEditor, type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { type Terminal, TUI } from "@earendil-works/pi-tui";
+import { makeCommandRegistryPi } from "./helpers/mock-pi.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -868,24 +869,15 @@ describe("installWorkflowEditor", () => {
 
   it("supports legacy WorkflowModeState objects without keywordTriggerWord", async () => {
     const mod = await load();
-    const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
-    const sent: Array<{ content?: string }> = [];
+    const { pi, commands, sent } = makeCommandRegistryPi();
     const state = { active: false, keywordTriggerEnabled: true };
-    const pi = {
-      registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => {
-        commands.set(name, command);
-      },
-      sendMessage: (message: { content?: string }) => {
-        sent.push(message);
-      },
-    } as unknown as ExtensionAPI;
 
     mod.registerWorkflowTriggerCommand(pi, state, {
       load: () => ({}),
       save: () => {},
     });
 
-    const command = commands.get("workflows-trigger");
+    const command = commands.find((item) => item.name === "workflows-trigger");
     assert.ok(command, "should register /workflows-trigger");
 
     await command.handler("status", {});

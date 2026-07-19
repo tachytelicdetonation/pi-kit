@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import test from "node:test";
 import { WORKFLOW_SAVED_DIR } from "../../src/workflows/config.js";
@@ -14,13 +14,13 @@ import { withFakeHomeAsync } from "./helpers/fake-home.js";
  */
 function withIsolatedHome(fn: (cwd: string) => Promise<void>) {
   return async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "pi-dw-ws-"));
-    const fakeHome = mkdtempSync(join(tmpdir(), "pi-dw-home-"));
+    const cwd = tempDir("pi-dw-ws-");
+    const fakeHome = tempDir("pi-dw-home-");
     try {
       await withFakeHomeAsync(fakeHome, () => fn(cwd));
     } finally {
-      rmSync(cwd, { recursive: true, force: true });
-      rmSync(fakeHome, { recursive: true, force: true });
+      removeTempDir(cwd);
+      removeTempDir(fakeHome);
     }
   };
 }

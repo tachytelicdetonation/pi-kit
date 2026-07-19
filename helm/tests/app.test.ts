@@ -4,22 +4,9 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { HelmApp, type TuiLike } from "../src/app.js";
 import { MockDataSource } from "../src/data/mock.js";
 import type { DataSource } from "../src/data/source.js";
+import { flush, stripAnsi, trackedTui as fakeTui } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-/** A fake tui with mutable, live terminal dimensions and a render counter. */
-function fakeTui(rows: number, columns: number) {
-  let renders = 0;
-  const tui: TuiLike = {
-    terminal: { rows, columns },
-    requestRender() {
-      renders += 1;
-    },
-  };
-  return { tui, renders: () => renders };
-}
 
 for (const rows of [30, 24, 18, 5, 4, 3]) {
   test(`render emits exactly ${rows} lines, each within width`, () => {

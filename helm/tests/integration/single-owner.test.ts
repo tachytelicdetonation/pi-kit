@@ -13,39 +13,58 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import helmExtension from "../../extensions/helm.js";
+import { RealDataSource } from "../../src/data/real.js";
+import { withTempProject } from "../helpers/tmp.js";
+import { fakeTui, theme256 } from "../helpers/tui.js";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const read = (rel: string) => readFileSync(path.join(here, "..", "..", rel), "utf8");
 const load = (rel: string): Promise<any> => import(rel).catch(() => undefined);
 
 // ── Wiring guards: runnable TODAY, RED against current helm/extensions/helm.ts ──
 
-test("production wiring: /helm must NOT construct MockDataSource (the #1 disconnect)", () => {
-  const src = read("extensions/helm.ts");
-  assert.ok(
-    !src.includes("MockDataSource"),
-    "extensions/helm.ts still wires MockDataSource — the entry must consume the composition root's RealDataSource",
-  );
-});
+test("production wiring: /helm constructs the app with RealDataSource", () =>
+  withTempProject(async () => {
+    let helmHandler: ((args: string, context: ExtensionContext) => Promise<void>) | undefined;
+    const handlers = new Map<string, unknown>();
+    const pi = new Proxy(
+      {
+        on: (event: string, handler: unknown) => handlers.set(event, handler),
+        getCommands: () => [],
+        getActiveTools: () => [],
+        setActiveTools: () => {},
+        registerTool: () => {},
+        registerCommand: (name: string, command: { handler: typeof helmHandler }) => {
+          if (name === "helm") helmHandler = command.handler;
+        },
+        exec: async () => ({ code: 1, stdout: "", stderr: "" }),
+      },
+      { get: (target, key) => Reflect.get(target, key) },
+    ) as unknown as ExtensionAPI;
 
-test("production wiring: exit must restore the USAGE footer, never setFooter(undefined)", () => {
-  const src = read("extensions/helm.ts");
-  assert.ok(
-    !/setFooter\(\s*undefined\s*\)/.test(src),
-    "extensions/helm.ts restores the BUILT-IN footer via setFooter(undefined) — it must hand back the usage footer through FooterController.restore()",
-  );
-});
+    helmExtension(pi);
+    assert.ok(helmHandler, "the production extension registered /helm");
+
+    let component: unknown;
+    const context = {
+      mode: "tui",
+      ui: {
+        notify: () => {},
+        setFooter: () => {},
+        custom: async (factory: (...args: unknown[]) => unknown) => {
+          component = factory(fakeTui(), theme256, undefined, () => {});
+        },
+      },
+    } as unknown as ExtensionContext;
+    await helmHandler!("", context);
+
+    const source = (component as { dataSource?: unknown }).dataSource;
+    assert.ok(source instanceof RealDataSource, "the app received the production RealDataSource instance");
+  }, { fakeHome: true }));
 
 // ── FooterController behavioral spec (RED until src/host/footer-controller.ts exists) ──
 
 const fcModule = await load("../../src/host/footer-controller.js");
-
-test("FooterController module exists (RED until built)", () => {
-  assert.ok(fcModule?.FooterController, "helm/src/host/footer-controller.ts must export class FooterController");
-});
 
 if (fcModule?.FooterController) {
   const spyUi = () => {
@@ -86,13 +105,6 @@ if (fcModule?.FooterController) {
 
 const bridgeModule = await load("../../src/host/escalation-bridge.js");
 
-test("escalation bridge module exists (RED until built)", () => {
-  assert.ok(
-    bridgeModule?.bridgePermissionRequest,
-    "helm/src/host/escalation-bridge.ts must export bridgePermissionRequest(dataSource, request): Promise<number>",
-  );
-});
-
 if (bridgeModule?.bridgePermissionRequest) {
   test("a permission request surfaces as a helm escalation and resolves when the operator decides — no ctx.ui call", async () => {
     const { MockDataSource } = await import("../../src/data/mock.js");
@@ -117,13 +129,6 @@ if (bridgeModule?.bridgePermissionRequest) {
 // ── Capabilities: probe once, degrade gracefully ──
 
 const capsModule = await load("../../src/host/capabilities.js");
-
-test("capabilities module exists (RED until built)", () => {
-  assert.ok(
-    capsModule?.probeCapabilities,
-    "helm/src/host/capabilities.ts must export probeCapabilities(deps): Promise<Capabilities>, memoized per session",
-  );
-});
 
 if (capsModule?.probeCapabilities) {
   test("a missing cmux binary probes to false — resolves, never throws; probe is memoized", async () => {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createEffortState, effortDirective, isSubstantive, registerEffortCommand } from "../../src/workflows/effort-command.js";
 import { buildForcedWorkflowPrompt } from "../../src/workflows/workflow-editor.js";
+import { makeCommandRegistryPi } from "./helpers/mock-pi.js";
 
 test("effortDirective returns a tier nudge for high/ultra, nothing for off", () => {
   assert.equal(effortDirective("off"), undefined);
@@ -28,13 +29,9 @@ test("buildForcedWorkflowPrompt appends the extra directive only when provided",
 type CmdDef = { handler: (a: string, c: unknown) => Promise<void> };
 
 function registerAndCapture(state: ReturnType<typeof createEffortState>) {
-  const cmds = new Map<string, CmdDef>();
-  const pi = {
-    registerCommand: (name: string, d: unknown) => cmds.set(name, d as CmdDef),
-    sendMessage: () => {},
-  };
-  registerEffortCommand(pi as never, state);
-  return cmds;
+  const { pi, commands } = makeCommandRegistryPi();
+  registerEffortCommand(pi, state);
+  return new Map(commands.map((command) => [command.name, command as CmdDef]));
 }
 
 test("registerEffortCommand: /effort toggles the shared state", async () => {

@@ -6,6 +6,7 @@ import { createEffortState, effortDirective } from "../../src/workflows/effort-c
 import { registerWorkflowCommands } from "../../src/workflows/workflow-commands.js";
 import { buildForcedWorkflowPrompt, WORKFLOW_TOOL_NAME } from "../../src/workflows/workflow-editor.js";
 import type { WorkflowManager } from "../../src/workflows/workflow-manager.js";
+import { makeCommandRegistryPi } from "./helpers/mock-pi.js";
 
 type Handler = (args: string, ctx: any) => Promise<void>;
 
@@ -27,25 +28,20 @@ function harness(
   }> = [];
   const notified: Array<{ message: string; type?: string }> = [];
   const calls: string[] = [];
-  const activeTools = [...initialTools];
+  const registry = makeCommandRegistryPi([], initialTools);
+  const activeTools = registry.activeTools;
   let handler: Handler | undefined;
 
-  const pi: Partial<ExtensionAPI> = {
-    getCommands: () => [],
-    registerCommand: (_name: string, opts: { handler: Handler }) => {
-      handler = opts.handler;
-    },
-    sendMessage:
+  const pi = registry.pi as unknown as Partial<ExtensionAPI>;
+  pi.registerCommand = (_name: string, opts: { handler: Handler }) => {
+    handler = opts.handler;
+  };
+  pi.sendMessage =
       sendMessageImpl ??
       (async (m, options) => {
         sent.push({ ...m, options });
         if (!options && typeof m.content === "string") printed.push(m.content);
-      }),
-    getActiveTools: () => [...activeTools],
-    setActiveTools: (toolNames: string[]) => {
-      activeTools.splice(0, activeTools.length, ...toolNames);
-    },
-  };
+      });
 
   const manager: Partial<WorkflowManager> = {
     listRuns: () => [],
@@ -174,15 +170,9 @@ test("/workflows status without id warns", async () => {
 });
 
 test("registerWorkflowCommands is idempotent (skips when already registered)", () => {
-  let registrations = 0;
-  const pi: Partial<ExtensionAPI> = {
-    getCommands: () => [{ name: "workflows" }],
-    registerCommand: () => {
-      registrations++;
-    },
-  };
-  registerWorkflowCommands(pi as unknown as ExtensionAPI, {} as unknown as WorkflowManager);
-  assert.equal(registrations, 0);
+  const { pi, commands } = makeCommandRegistryPi(["workflows"]);
+  registerWorkflowCommands(pi, {} as WorkflowManager);
+  assert.equal(commands.length, 0);
 });
 
 test("/workflows status watches a running run: live status bar + prints on completion", async () => {
@@ -202,7 +192,7 @@ test("/workflows status watches a running run: live status bar + prints on compl
   manager.getSnapshot = () => null;
   manager.listRuns = () => [];
 
-  const statusLine: Array<string | undefined> = [];
+  let visibleStatus: string | undefined;
   const printed: string[] = [];
   let handler: ((a: string, c: any) => Promise<void>) | undefined;
   const pi: any = {
@@ -213,12 +203,12 @@ test("/workflows status watches a running run: live status bar + prints on compl
     sendMessage: async (m: any) => printed.push(m.content),
   };
   registerWorkflowCommands(pi as unknown as ExtensionAPI, manager as unknown as WorkflowManager);
-  const ctx = { ui: { notify: () => {}, setStatus: (_k: string, t?: string) => statusLine.push(t) } };
+  const ctx = { ui: { notify: () => {}, setStatus: (_k: string, text?: string) => { visibleStatus = text; } } };
 
   assert.ok(handler, "handler should exist");
   await handler("status run-1", ctx);
   assert.ok(
-    statusLine.some((s) => typeof s === "string"),
+    typeof visibleStatus === "string",
     "sets a live status line",
   );
   assert.equal(printed.length, 0, "does not print until the run finishes");
@@ -227,7 +217,7 @@ test("/workflows status watches a running run: live status bar + prints on compl
   snapshot.agents[0].status = "done";
   manager.emit("complete", { runId: "run-1" });
   assert.equal(printed.length, 1, "prints final snapshot on completion");
-  assert.ok(statusLine.includes(undefined), "clears the status line");
+  assert.equal(visibleStatus, undefined, "the live status is no longer visible after completion");
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -3,9 +3,9 @@ import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { computeCtxMeter, computeStackedBar, renderHelmFooter } from "../src/footer.js";
 import type { HelmFooterModel } from "../src/state/types.js";
+import { stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
 
 const model: HelmFooterModel = {
   cwd: "~/pi-kit",

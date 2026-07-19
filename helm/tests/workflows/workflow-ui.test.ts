@@ -6,10 +6,11 @@ import type { PersistedRunState } from "../../src/workflows/run-persistence.js";
 import type { ManagedRun, WorkflowManager } from "../../src/workflows/workflow-manager.js";
 import type { SavedWorkflow } from "../../src/workflows/workflow-saved.js";
 import { keyToAction, NavigatorModel, NavigatorState, renderNavigator } from "../../src/workflows/workflow-ui.js";
+import { staticManager, workflowSnapshot } from "../helpers/workflow.js";
 
 /** Fake manager exposing one running run with two phases. */
 function fakeManager(): Pick<WorkflowManager, "listRuns" | "getRun"> {
-  const snapshot: WorkflowSnapshot = {
+  const snapshot: WorkflowSnapshot = workflowSnapshot({
     name: "audit",
     phases: ["Scan", "Report"],
     currentPhase: "Report",
@@ -42,9 +43,8 @@ function fakeManager(): Pick<WorkflowManager, "listRuns" | "getRun"> {
     doneCount: 2,
     errorCount: 0,
     tokenUsage: { input: 100, output: 50, total: 1050, cost: 0, cacheRead: 900, cacheWrite: 0 },
-  };
-  return {
-    listRuns: () => [
+  });
+  const runs = [
       {
         runId: "run-1",
         workflowName: "audit",
@@ -54,10 +54,11 @@ function fakeManager(): Pick<WorkflowManager, "listRuns" | "getRun"> {
         logs: [],
         tokenUsage: snapshot.tokenUsage,
       } as unknown as PersistedRunState,
-    ],
-    getRun: (id: string) =>
-      id === "run-1" ? ({ runId: "run-1", status: "running", snapshot } as unknown as ManagedRun) : undefined,
-  };
+    ];
+  return staticManager(
+    runs,
+    (id) => id === "run-1" ? ({ runId: "run-1", status: "running", snapshot } as unknown as ManagedRun) : undefined,
+  );
 }
 
 function errorDetailManager(): Pick<WorkflowManager, "listRuns" | "getRun"> {

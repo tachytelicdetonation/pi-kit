@@ -1,21 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { HelmApp, type TuiLike } from "../src/app.js";
+import { HelmApp } from "../src/app.js";
 import { MockDataSource, seedCloseout } from "../src/data/mock.js";
 import { renderCloseout } from "../src/screens/closeout.js";
+import { fakeTui, flush, stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
 const strip = (lines: string[]) => lines.map(stripAnsi);
 const XTERM = { success: 78, error: 203, bright: 254 };
 const hasColor = (line: string, xterm: number) => line.includes(`\x1b[38;5;${xterm}m`);
 
-function fakeTui(rows: number, columns: number): TuiLike {
-  return { terminal: { rows, columns }, requestRender() {} };
-}
-
-const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 // ── render safety ─────────────────────────────────────────────────────────────
 for (const width of [120, 90, 70, 40, 12, 1]) {

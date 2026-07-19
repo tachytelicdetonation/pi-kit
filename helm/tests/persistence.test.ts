@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "./helpers/tmp.js";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { RealDataSource } from "../src/data/real.js";
@@ -85,7 +85,7 @@ function closeout(goalId: string, proposedPrecedents: Precedent[]): Closeout {
 }
 
 test("real data source refuses decline changes after a precedent is handed off", () => {
-  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const cwd = tempDir("helm-project-");
   const statePath = join(cwd, ".state", "helm.json");
   const precedent: Precedent = {
     id: "handed-off",
@@ -112,12 +112,12 @@ test("real data source refuses decline changes after a precedent is handed off",
     assert.deepEqual(ds.precedents().find((item) => item.id === precedent.id), precedent);
     assert.equal(ds.snapshot().audit?.length ?? 0, auditCount);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    removeTempDir(cwd);
   }
 });
 
 test("applying an empty closeout is a no-op without audit or agent handoff", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const cwd = tempDir("helm-project-");
   const statePath = join(cwd, ".state", "helm.json");
   try {
     const repository = createHelmRepository(cwd, statePath);
@@ -135,12 +135,12 @@ test("applying an empty closeout is a no-op without audit or agent handoff", asy
     assert.equal(result.agentPrompt, undefined);
     assert.equal(ds.snapshot().audit?.length ?? 0, auditCount);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    removeTempDir(cwd);
   }
 });
 
 test("goal intent and scheduled-loop definitions survive a fresh data-source instance", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const cwd = tempDir("helm-project-");
   const statePath = join(cwd, ".state", "helm.json");
   try {
     const first = source(cwd, statePath);
@@ -162,12 +162,12 @@ test("goal intent and scheduled-loop definitions survive a fresh data-source ins
     assert.equal(reloaded.getLoopDraft(loopDraft.id!)?.trialPassed, true);
     await reloaded.execute({ type: "loop.togglePause", loopId: loopDraft.id! });
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    removeTempDir(cwd);
   }
 });
 
 test("a loop cannot be scheduled until its current definition passes trial", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const cwd = tempDir("helm-project-");
   const statePath = join(cwd, ".state", "helm.json");
   try {
     const ds = source(cwd, statePath);
@@ -176,12 +176,12 @@ test("a loop cannot be scheduled until its current definition passes trial", asy
     assert.equal(result.ok, false);
     assert.match(result.message ?? "", /trial/i);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    removeTempDir(cwd);
   }
 });
 
 test("scheduled firings use the immutable active definition while edits remain a pending draft", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const cwd = tempDir("helm-project-");
   const statePath = join(cwd, ".state", "helm.json");
   const fired: LoopDefinition[] = [];
   try {
@@ -207,12 +207,12 @@ test("scheduled firings use the immutable active definition while edits remain a
     assert.deepEqual(fired[0], activeBefore, "the due firing reads only activeDefinition");
     assert.ok(ds.search("completed").some((hit) => hit.kind === "audit" || hit.kind === "loopRun"));
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    removeTempDir(cwd);
   }
 });
 
 test("failed trial persists a machine verdict, reopens draft lifecycle, and never schedules", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const cwd = tempDir("helm-project-");
   const statePath = join(cwd, ".state", "helm.json");
   try {
     const ds = source(cwd, statePath, workflowPort({
@@ -227,12 +227,12 @@ test("failed trial persists a machine verdict, reopens draft lifecycle, and neve
     assert.deepEqual(draft.lastTrialVerdict?.evidence, ["guardrail violation"]);
     assert.equal((await ds.execute({ type: "loop.schedule", loopId: created.id! })).ok, false);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    removeTempDir(cwd);
   }
 });
 
 test("pause-all survives relaunch, resumes only checkpointed runs, and shifts only active loop deadlines", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const cwd = tempDir("helm-project-");
   const statePath = join(cwd, ".state", "helm.json");
   const resumed: string[][] = [];
   let scheduledRuns = 0;
@@ -262,7 +262,7 @@ test("pause-all survives relaunch, resumes only checkpointed runs, and shifts on
     assert.equal(reloaded.snapshot().loops.find((loop) => loop.id === individuallyPaused.id)?.health, "paused");
     assert.ok(reloaded.snapshot().loops.find((loop) => loop.id === active.id)!.nextRunAtMs! > Date.now());
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    removeTempDir(cwd);
   }
 });
 
@@ -286,7 +286,7 @@ function escalation(id: string, overrides: Partial<Escalation> = {}): Escalation
 }
 
 test("decision signatures auto-resolve stably, declined precedents persist, and permission prompts never auto-resolve", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const cwd = tempDir("helm-project-");
   const statePath = join(cwd, ".state", "helm.json");
   try {
     const first = source(cwd, statePath);
@@ -309,12 +309,12 @@ test("decision signatures auto-resolve stably, declined precedents persist, and 
     reloaded.addEscalation({ ...permission, id: "permission-2" });
     assert.ok(reloaded.getEscalation("permission-2"), "permission-class ingress never auto-resolves");
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    removeTempDir(cwd);
   }
 });
 
 test("follow-up questions and answers persist while the escalation stays active", () => {
-  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const cwd = tempDir("helm-project-");
   const statePath = join(cwd, ".state", "helm.json");
   try {
     const ds = source(cwd, statePath);
@@ -326,12 +326,12 @@ test("follow-up questions and answers persist while the escalation stays active"
     assert.equal(reloaded.getEscalation("follow-up")?.followUps?.[0]?.answer, "The legacy condition order changes resolution.");
     assert.equal(reloaded.getEscalation("follow-up")?.resolved, undefined);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    removeTempDir(cwd);
   }
 });
 
 test("intake planning happens before spawn and re-plans until all structured questions are answered", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "helm-project-"));
+  const cwd = tempDir("helm-project-");
   const statePath = join(cwd, ".state", "helm.json");
   let plans = 0;
   let starts = 0;
@@ -364,6 +364,6 @@ test("intake planning happens before spawn and re-plans until all structured que
     assert.equal(starts, 1);
     assert.ok(ds.search("started goal").some((hit) => hit.kind === "audit"));
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    removeTempDir(cwd);
   }
 });

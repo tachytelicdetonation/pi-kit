@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import type { AgentRunOptions, AgentUsage } from "../../src/workflows/agent.js";
@@ -35,7 +35,7 @@ test("WorkflowAgent with persistAgentSessions=false explicitly stays in-memory",
 });
 
 test("WorkflowAgent with persistAgentSessions=true creates a file-backed manager keyed by the project cwd", () => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-dynamic-workflows-persist-agent-"));
+  const dir = tempDir("pi-dynamic-workflows-persist-agent-");
   const projectCwd = join(dir, "project");
   const fakeHome = join(dir, "home");
   try {
@@ -50,12 +50,12 @@ test("WorkflowAgent with persistAgentSessions=true creates a file-backed manager
       assert.equal(manager.getCwd(), projectCwd);
     });
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   }
 });
 
 test("WorkflowAgent degrades to in-memory when the session directory can't be created", () => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-dynamic-workflows-persist-agent-fail-"));
+  const dir = tempDir("pi-dynamic-workflows-persist-agent-fail-");
   const projectCwd = join(dir, "project");
   const fakeHome = join(dir, "home");
   try {
@@ -83,7 +83,7 @@ test("WorkflowAgent degrades to in-memory when the session directory can't be cr
       }
     });
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   }
 });
 

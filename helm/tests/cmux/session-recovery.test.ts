@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { ClaudeSessionController } from "../../src/cmux/session-controller.js";
@@ -18,7 +18,7 @@ async function makeHarness(options: {
   lifecycle?: string;
   finalText?: string;
 }): Promise<Harness> {
-  const directory = await mkdtemp(join(tmpdir(), "claude-cmux-recovery-"));
+  const directory = tempDir("claude-cmux-recovery-");
   const transcriptPath = join(directory, "session.jsonl");
   await writeFile(transcriptPath, `${JSON.stringify({ type: "user", message: { content: "prompt" } })}\n`);
   const offset = await transcriptOffset(transcriptPath);
@@ -75,7 +75,7 @@ test("recovers a completed turn from the transcript when the epoch aborts", asyn
     assert.equal(result?.recovered, true);
     assert.equal(h.run.state, "recovering");
   } finally {
-    await rm(h.directory, { recursive: true, force: true });
+    removeTempDir(h.directory);
   }
 });
 
@@ -84,7 +84,7 @@ test("fails closed when the session lifecycle is not input-ready", async () => {
   try {
     assert.equal(await recover(h, new Error("cmux event stream reported a sequence gap")), undefined);
   } finally {
-    await rm(h.directory, { recursive: true, force: true });
+    removeTempDir(h.directory);
   }
 });
 
@@ -93,7 +93,7 @@ test("fails closed when the transcript gained no assistant output", async () => 
   try {
     assert.equal(await recover(h, new Error("cmux event epoch changed while waiting")), undefined);
   } finally {
-    await rm(h.directory, { recursive: true, force: true });
+    removeTempDir(h.directory);
   }
 });
 
@@ -102,6 +102,6 @@ test("does not recover for non-epoch errors like timeouts", async () => {
   try {
     assert.equal(await recover(h, new Error("Timed out waiting for cmux event after 1000ms")), undefined);
   } finally {
-    await rm(h.directory, { recursive: true, force: true });
+    removeTempDir(h.directory);
   }
 });

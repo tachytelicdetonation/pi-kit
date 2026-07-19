@@ -342,15 +342,21 @@ describe("display", () => {
     assert.ok(text.includes("found 3 issues"), "should contain found 3 issues");
   });
 
-  it("renderWorkflowLines shows token info when available", async () => {
+  it("renderWorkflowLines formats token metrics exactly across boundaries", async () => {
     const { createWorkflowSnapshot, renderWorkflowLines } = await load();
-    const meta: WorkflowMeta = { name: "wf", description: "d" };
-    const snap = createWorkflowSnapshot(meta);
-    snap.tokenUsage = { input: 100, output: 50, total: 150, cost: 0.002 };
-    const lines = renderWorkflowLines(snap);
-    const text = lines.join("\n");
-    assert.ok(text.includes("150"), "should contain 150");
-    assert.ok(text.includes("$0.0020"), "should contain $0.0020");
+    const cases = [
+      { usage: { input: 100, output: 50, total: 150, cost: 0.002 }, expected: "150 tok · $0.0020" },
+      { usage: { input: 1_000, output: 500, total: 1_500, cost: 0.042 }, expected: "1,500 tok · $0.04" },
+      { usage: { input: 500, output: 300, total: 800 }, expected: "800 tok" },
+    ];
+
+    for (const { usage, expected } of cases) {
+      const snap = createWorkflowSnapshot({ name: "wf", description: "d" });
+      snap.tokenUsage = usage;
+      const header = renderWorkflowLines(snap)[0];
+      const metrics = header.match(/\((.*)\)$/)?.[1].split(" · ").slice(1).join(" · ");
+      assert.equal(metrics, expected);
+    }
   });
 });
 

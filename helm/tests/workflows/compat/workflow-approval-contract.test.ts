@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import {
@@ -56,7 +56,7 @@ test("APP-03 headless and bypass never request UI", () => {
 });
 
 test("permanent approval store survives recreation and remains scoped to project/source/name", () => {
-  const directory = mkdtempSync(join(tmpdir(), "workflow-approvals-"));
+  const directory = tempDir("workflow-approvals-");
   const path = join(directory, "approvals.json");
   const approved = { projectCwd: directory, workflowName: "audit", sourceLocation: join(directory, "audit.js") };
   try {
@@ -66,7 +66,7 @@ test("permanent approval store survives recreation and remains scoped to project
     assert.equal(createWorkflowApprovalStore(path).has(approved), true);
     assert.equal(createWorkflowApprovalStore(path).has({ ...approved, workflowName: "other" }), false);
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    removeTempDir(directory);
   }
 });
 

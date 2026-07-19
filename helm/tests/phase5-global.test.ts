@@ -1,25 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { HelmApp, type TuiLike } from "../src/app.js";
+import { HelmApp } from "../src/app.js";
 import { MockDataSource, seedApiRenameEscalation } from "../src/data/mock.js";
 import type { Escalation } from "../src/state/types.js";
+import { stripAnsi, theme256, trackedTui as fakeTui } from "./helpers/tui.js";
 
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
 const strip = (lines: string[]) => lines.map(stripAnsi);
-const theme256 = { getColorMode: () => "256color" as const };
 const themeTrue = { getColorMode: () => "truecolor" as const };
-
-function fakeTui(rows: number, columns: number) {
-  let renders = 0;
-  const tui: TuiLike = {
-    terminal: { rows, columns },
-    requestRender() {
-      renders += 1;
-    },
-  };
-  return { tui, renders: () => renders };
-}
 
 // ── resize reflow: render reads terminal.rows/width live, on EVERY screen ────────
 test("a rows change reflows every screen to the new exact line count", async () => {
