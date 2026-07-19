@@ -227,3 +227,17 @@ Plan: CLEAN-1 (shared helpers extraction + 12 weak-test fixes; commit) → CLEAN
 
 Worktrees: /Users/tanmaydeshmukh/Projects/pi-kit-wt-clean (fable/clean), -wt-gaps (fable/gaps), both @ 57130ad.
 Fix cycles used: 0 of 2. Safety: every deletion must name a surviving test covering the same behavior/state or be KEPT; suite green + tsc + conformance-v2 unchanged verified outside sandbox before merge.
+
+## Run 3 closeout — State: SHIPPED (gate-4 verdict SHIP)
+
+Commits (fable/clean → main merge ca4958e): 4c2e2ad helpers+weak-tests; 99cee84 −73 deletions w/ survivor ledger (~45 KEPT); c7ea9ea gap tests (19, via fable/gaps merge ed6347c); 9046101 DESIGN-HARNESS.md; cd8cda9 fix cycle 1 (10 findings); fd38334 registry truth-fix (orchestrator-applied doc edit — deviation, precedent run 2).
+
+Adversarial review findings (verbatim verdicts): claims 1-4 BROKEN, claim 5 (conformance-v2 byte-identity) HOLDS. F1 delivery-idempotency vacuous; F2 conditional module-existence no-ops; F3 lastAssistantText edges lost; F4 onModelResolved unasserted; F5 ESC closed-state lost; F6 archived sublabel lost; F7 default-idle lost; F8 M3 tautological (invented fields); F9 flush semantics drift; F10 abort race overstated. Full text: reviewer report preserved in session scratchpad out-review3.md.
+
+Fix cycle 1 (cd8cda9, 1 of 2 used): all 10 addressed; mutation evidence on F1/F4/F5/F7. Delta re-review verdicts (verbatim): F1 NARROWED (reinstall idempotence genuinely covered; named promise-completion race does not occur — accepted, production's fulfilled promise performs no delivery); F2-F7, F9, F10 CLOSED; F8 REGRESSED (registry claimed by-construction suppression; counterexample Workflow.summary/Loop.pipelineSummary free strings rendered on home). F8 resolved by orchestrator doc edit fd38334: registry now states the residual truthfully (COVERED (residual)).
+
+GAP-UNIMPLEMENTED product gaps recorded in DESIGN-HARNESS.md, pending user decisions (NOT test work): D29 no unfocused-60s notification logic; D3 mission-control renders numbered action key in right column (design says status-only); D34 no minute-cadence/transition-only animation seam; D53 j/k types into search on some paths + Enter no-op on selectable session rows.
+
+ENVIRONMENT notes: codex CLI killed 3 lanes mid-run this session (models-manager "failed to renew cache TTL" error) — all recovered by relaunch; classified TOOL_FAILURE, never product signal.
+
+Final verification on merged main: tsc clean; full suite 1,824 tests / 1,823 pass / 0 fail / 1 skip (outside sandbox); conformance-v2 85/85, byte-identical to 57130ad. Suite shape: 1,439 → ~1,385 declared (−73 dupes/weak/orphans, +19 harness), plus shared helpers (tests/helpers/) and the D1-D60 registry (helm/tests/DESIGN-HARNESS.md: 51 COVERED, 2 COVERED (residual), 3 ACCEPTED-GAP, 4 PRODUCT-GAP).
