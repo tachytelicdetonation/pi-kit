@@ -189,7 +189,10 @@ test("enter on a 6c worktree row pushes the 4a session", () => {
 
 test("esc ascends: session → drill-in → home, then stays at home", () => {
   const { tui } = fakeTui(30, 120);
-  const app = new HelmApp(tui, theme, () => {});
+  let closed = false;
+  const app = new HelmApp(tui, theme, () => {
+    closed = true;
+  });
   intoSession(app);
   // esc → back to 6c drill-in
   app.handleInput("\x1b");
@@ -203,6 +206,7 @@ test("esc ascends: session → drill-in → home, then stays at home", () => {
   app.handleInput("\x1b");
   lines = app.render(120).map(stripAnsi);
   assert.match(lines[0], /mission control/, "esc at home stays at home");
+  assert.equal(closed, false, "esc at home must not invoke the app close callback");
 });
 
 test("j/k selection is per-screen and clamps independently", () => {

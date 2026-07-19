@@ -254,14 +254,30 @@ describe("installResultDelivery", () => {
   // ── installResultDelivery: guard / stale ctx ──
 
   it("does not deliver twice when both manager complete and promise completion fire", async () => {
-    const pi = createMockPi();
+    let deliveryCount = 0;
+    let promiseCompletionCount = 0;
+    let resolveDelivery!: () => void;
+    const deliveryPromise = new Promise<void>((resolve) => {
+      resolveDelivery = resolve;
+    });
+    const pi = {
+      sendMessage: () => {
+        deliveryCount += 1;
+        return deliveryPromise.then(() => {
+          promiseCompletionCount += 1;
+        });
+      },
+    } as unknown as ExtensionAPI;
     const manager = createMockManager(makeRun());
 
     mod.installResultDelivery(pi as unknown as ExtensionAPI, manager);
+    mod.installResultDelivery(pi as unknown as ExtensionAPI, manager);
     manager.emit("complete", { runId: "test-run-1" });
+    resolveDelivery();
+    await deliveryPromise;
     await Promise.resolve();
-    const calls = (pi as unknown as { _calls: { content: string }[] })._calls;
-    assert.equal(calls.length, 1, "delivery promise completion must not enqueue the result a second time");
+    assert.equal(deliveryCount, 1, "re-install plus both completion paths must still deliver exactly once");
+    assert.equal(promiseCompletionCount, 1, "the single delivery promise completed");
   });
 
   it("does not crash when sendMessage throws (stale ctx after reload)", () => {

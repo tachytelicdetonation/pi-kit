@@ -66,6 +66,12 @@ test("the action line follows the trial gate (idle → passed → failed)", () =
   assert.ok(hasColor(failureLine, XTERM.error), "the failure line is error-colored");
 });
 
+test("renderLoopBuilder defaults trial state to the explicit idle rendering", () => {
+  const implicit = renderLoopBuilder(seedLoopDraft(), theme, 120, 40);
+  const explicit = renderLoopBuilder(seedLoopDraft(), theme, 120, 40, "idle");
+  assert.deepEqual(implicit, explicit);
+});
+
 // ── app wiring: the trial → s/r/x state machine ────────────────────────────────
 function intoBuilder(app: HelmApp): void {
   app.handleInput("N"); // new loop → 7a loop builder

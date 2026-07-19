@@ -8,7 +8,7 @@ import {
   type SchedulableWorkflowManager,
   UsageLimitScheduler,
 } from "../../src/workflows/usage-limit-scheduler.js";
-import { flush } from "../helpers/tui.js";
+import { flushMicrotasks } from "../helpers/tui.js";
 
 // ---- test doubles -----------------------------------------------------------
 
@@ -192,7 +192,7 @@ test("live pause: arms a timer that calls manager.resume() on fire", async () =>
   assert.deepEqual(clock.pendingDelays(), [10 * 60_000]);
 
   clock.fireAll();
-  await flush(6);
+  await flushMicrotasks();
 
   assert.deepEqual(resumedRunIds, ["run-1"], "resume() was called when the timer fired");
   scheduler.dispose();
@@ -358,14 +358,14 @@ test("resume() returning false does NOT consume an attempt and re-arms at minDel
   assert.equal(scheduler.getAttemptCount("run-1"), 1);
 
   clock.fireAll();
-  await flush(6);
+  await flushMicrotasks();
 
   assert.equal(resumeCalls, 1);
   assert.equal(scheduler.getAttemptCount("run-1"), 1, "attempt count unchanged by a false resume()");
   assert.deepEqual(clock.pendingDelays(), [TUNABLES.minDelayMs], "re-armed at the short floor delay");
 
   clock.fireAll();
-  await flush(6);
+  await flushMicrotasks();
   assert.equal(resumeCalls, 2, "retried again on the next fire");
   assert.equal(scheduler.getAttemptCount("run-1"), 1, "still hasn't consumed an attempt");
 
@@ -392,7 +392,7 @@ test("resume() returning false and run now completed/aborted stops retrying", as
 
   manager.emit("paused", { runId: "run-1", reason: "usage_limit", resetHint: "resets in 10m" });
   clock.fireAll();
-  await flush(6);
+  await flushMicrotasks();
 
   assert.equal(clock.pendingCount(), 0, "no retry armed once the run is terminal");
   assert.equal(scheduler.getAttemptCount("run-1"), undefined, "state cleaned up");
@@ -414,7 +414,7 @@ test("resume() returning true stops this cycle; the existing 'paused' subscripti
 
   manager.emit("paused", { runId: "run-1", reason: "usage_limit", resetHint: "resets in 10m" });
   clock.fireAll();
-  await flush(6);
+  await flushMicrotasks();
 
   assert.equal(clock.pendingCount(), 0, "no further timer armed after a successful resume()");
   assert.equal(scheduler.hasArmedTimer("run-1"), false);
@@ -497,7 +497,7 @@ test("attempts and opt-out are persisted (best-effort) for a future cold start",
   });
 
   manager.emit("paused", { runId: "run-1", reason: "usage_limit", resetHint: "resets in 10m" });
-  await flush(6);
+  await flushMicrotasks();
 
   const persisted = manager.persistence.get("run-1");
   assert.equal(persisted?.autoResumeAttempts, 1, "attempt count persisted after the microtask flush");

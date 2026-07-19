@@ -101,13 +101,25 @@ test(
   withTempCwd(async (cwd) => {
     // Per-call deferred agent: each call to run() gets its own promise.
     const resolves: Array<(v: unknown) => void> = [];
+    const startedPrompts: string[] = [];
+    let signalFirstStarted!: () => void;
+    let signalSecondStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      signalFirstStarted = resolve;
+    });
+    const secondStarted = new Promise<void>((resolve) => {
+      signalSecondStarted = resolve;
+    });
     let callIdx = 0;
     const multiDa = {
       resolve(idx: number, v: unknown = "done") {
         resolves[idx]?.(v);
       },
       runner: {
-        async run(_prompt: string, _options?: { onUsage?: (u: AgentUsage) => void }) {
+        async run(prompt: string, _options?: { onUsage?: (u: AgentUsage) => void }) {
+          startedPrompts.push(prompt);
+          if (startedPrompts.length === 1) signalFirstStarted();
+          if (startedPrompts.length === 2) signalSecondStarted();
           const idx = callIdx++;
           return new Promise((resolve) => {
             resolves[idx] = resolve;
@@ -119,18 +131,19 @@ test(
     const manager = new WorkflowManager({ cwd, agent: multiDa.runner });
     manager.on("error", () => {});
 
-    const twoAgentScript = `export const meta = { name: 'two_agent', description: 'two agents test' }
+    const threeAgentScript = `export const meta = { name: 'three_agent', description: 'three agents test' }
 const a = await agent('first', { label: 'first' })
 const b = await agent('second', { label: 'second' })
-return { a, b }`;
+const c = await agent('third', { label: 'third' })
+return { a, b, c }`;
 
-    const { runId, promise } = manager.startInBackground(twoAgentScript);
-    await new Promise((r) => setTimeout(r, 20));
+    const { runId, promise } = manager.startInBackground(threeAgentScript);
+    await firstStarted;
 
     // Let agent 1 complete (gets journaled)
     multiDa.resolve(0, "first-done");
     // Wait for agent 1's result to be journaled and agent 2 to start
-    await new Promise((r) => setTimeout(r, 30));
+    await secondStarted;
 
     // Stop the run while agent 2 is in-flight
     const stopped = manager.stop(runId);
@@ -148,5 +161,6 @@ return { a, b }`;
     const managedRun = manager.getRun(runId);
     assert.ok(managedRun?.error instanceof WorkflowError, "error should be instance of WorkflowError");
     assert.equal((managedRun.error as WorkflowError).code, WorkflowErrorCode.WORKFLOW_ABORTED);
+    assert.deepEqual(startedPrompts, ["first", "second"], "the third queued agent never starts after stop");
   }),
 );

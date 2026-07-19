@@ -71,6 +71,10 @@ test("enter on a workflow result navigates to its 6c drill-in", () => {
 });
 
 test("enter on the ARCHIVED goal navigates to its closeout (search reaches archived)", () => {
+  const archived = source.search("auth");
+  assert.equal(archived.length, 1, "the archived goal remains searchable");
+  assert.equal(archived[0]?.sublabel, "archived", "the search result carries its archived state marker");
+
   const app = new HelmApp(fakeTui(30, 120), theme, () => {});
   app.handleInput("/");
   for (const ch of "auth") app.handleInput(ch);

@@ -24,4 +24,11 @@ export async function flush(times = 1): Promise<void> {
   }
 }
 
+/** Drain resolved-promise continuations without advancing to a macrotask. */
+export async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 6; index += 1) {
+    await Promise.resolve();
+  }
+}
+
 export const theme256 = { getColorMode: () => "256color" as const };

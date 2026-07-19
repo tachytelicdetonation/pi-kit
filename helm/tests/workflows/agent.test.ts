@@ -14,6 +14,7 @@ import { withFakeHome } from "./helpers/fake-home.js";
 // Private methods used for testing - cast to this type to access them without `any`
 type WorkflowAgentPrivates = {
   buildPrompt(prompt: string, options: AgentRunOptions<any>, structured: boolean): string;
+  lastAssistantText(messages: unknown[]): string;
   createSessionManager(): { isPersisted(): boolean; getCwd(): string };
 };
 
@@ -279,6 +280,42 @@ test("buildPrompt includes both instructions when both base and per-call are set
   );
 });
 
+test("lastAssistantText preserves extraction edge cases", () => {
+  const extract = (messages: unknown[]) =>
+    (new WorkflowAgent({ cwd: "/tmp" }) as unknown as WorkflowAgentPrivates).lastAssistantText(messages);
+  const cases: Array<{ name: string; messages: unknown[]; expected: string }> = [
+    {
+      name: "joins multiple text parts",
+      messages: [{ role: "assistant", content: [{ type: "text", text: "part1" }, { type: "text", text: "part2" }] }],
+      expected: "part1part2",
+    },
+    {
+      name: "skips tool parts",
+      messages: [{ role: "assistant", content: [{ type: "tool_use", id: "t1" }, { type: "text", text: "result" }] }],
+      expected: "result",
+    },
+    { name: "returns empty for empty input", messages: [], expected: "" },
+    {
+      name: "ignores non-assistant messages",
+      messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      expected: "",
+    },
+    {
+      name: "uses the last assistant message",
+      messages: [
+        { role: "assistant", content: [{ type: "text", text: "first" }] },
+        { role: "user", content: [{ type: "text", text: "more" }] },
+        { role: "assistant", content: [{ type: "text", text: "final" }] },
+      ],
+      expected: "final",
+    },
+  ];
+
+  for (const { name, messages, expected } of cases) {
+    assert.equal(extract(messages), expected, name);
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Full agent() pipeline inside runWorkflow — verifies the agent() function
 // in workflow.ts correctly invokes the runner with all options.
@@ -307,6 +344,38 @@ class CallRecordingAgent {
     options.onModelResolved?.("openai/gpt-4.1-mini");
     return this.result;
   }
+}
+
+for (const modelCase of [
+  {
+    name: "explicit opts.model",
+    agentOptions: "{ label: 't', model: 'requested/explicit' }",
+    mainModel: "session/default",
+  },
+  {
+    name: "inherited default",
+    agentOptions: "{ label: 't' }",
+    mainModel: "session/default",
+  },
+]) {
+  test(`agent() propagates onModelResolved for ${modelCase.name}`, async () => {
+    const rec = new CallRecordingAgent();
+    let recordedModel: string | undefined;
+    await runWorkflow(
+      `export const meta = { name: 'test', description: 't' }
+       await agent('task', ${modelCase.agentOptions})
+       return 1`,
+      {
+        agent: rec,
+        mainModel: modelCase.mainModel,
+        persistLogs: false,
+        onAgentEnd: (event) => {
+          recordedModel = event.model;
+        },
+      },
+    );
+    assert.equal(recordedModel, "openai/gpt-4.1-mini", `${modelCase.name} records the resolved model`);
+  });
 }
 
 test("agent() in workflow passes prompt and label to runner", async () => {
