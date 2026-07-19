@@ -208,3 +208,22 @@ LoopRun type; required DataSource.listLoopRuns(loopId) newest-first (real = dura
 
 ## Next action
 Both lanes return → adjudicate test manifest (spot-check highest-blast-radius: N1/N2, D2/D3, K3/K4) → integrate on wt-integrate (impl commit + squashed test commit) → run suite, classify failures → audit → merge/push.
+
+---
+
+# Run 3: test-suite consolidation + design harness (started 2026-07-18)
+
+## State: EXECUTING (CLEAN-1 ∥ GAPS)
+
+Verbatim request: "i feel tests are most important part, rght now they are all written by gpt 5.6 sol, my hypthosesis, is there are many non essential, it can be cleaned up, deduplicated, inteliggentlly combined etc / and even though there are almost 2k tests now, i dont think they properly represent the design harness, can you clean the tests up as a long term investment"
+
+User confirmed via structured question: **Full plan**; gap depth **high+medium** (8 new tests; 3 low-impact gaps logged as accepted in registry). Interpretation deltas confirmed: cleanup = ~70-90 non-protected deletions/collapses (not a rewrite; 976 workflow-infra tests stay, deduped); design harness = gap tests + durable D1-D60 registry; OS notification tested at decision boundary only.
+
+Context (sol LOW lanes, done): inventory report tool-results/bwx71un80.txt (98 files, 1,439 declared tests: 976 workflow infra / 266 app+screens / 95 protected conformance-v2 / 108 other; 58 collapsible overlap members in 13 clusters; 12 weak tests; fixture sprawl stripAnsi×18 fakeTui×11 tmp-lifecycle×15 factories×6); design matrix tool-results/beq833mou.txt (60 guarantees D1-D60, 49 covered, 11 gaps: 4 high D29/D55/D59/D60, 4 medium D3/D24/D34/D53, 3 low D1/D6/palette; orphan classification INFRA vs NON-ESSENTIAL). Census: all tests live in helm/tests; 2 patch-embedded tests elsewhere (keep).
+
+Baseline: main @ 57130ad. Protected tier: helm/tests/conformance-v2/** — untouched this run (imports from its helpers.ts allowed).
+
+Plan: CLEAN-1 (shared helpers extraction + 12 weak-test fixes; commit) → CLEAN-2 (58 dupes + NON-ESSENTIAL orphans deleted with per-deletion survivor mapping; own commit) on wt-clean; GAPS (8 design-harness tests in helm/tests/design-harness/, new files only) on wt-gaps in parallel; integrate → registry helm/tests/DESIGN-HARNESS.md → adversarial review (deletion-coverage + gap-test tautology) → gate 4.
+
+Worktrees: /Users/tanmaydeshmukh/Projects/pi-kit-wt-clean (fable/clean), -wt-gaps (fable/gaps), both @ 57130ad.
+Fix cycles used: 0 of 2. Safety: every deletion must name a surviving test covering the same behavior/state or be KEPT; suite green + tsc + conformance-v2 unchanged verified outside sandbox before merge.
