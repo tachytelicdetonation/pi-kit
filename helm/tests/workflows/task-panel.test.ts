@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { before, describe, it } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { eventManager as createMockManager, managedRun as makeRun } from "../helpers/workflow.js";
+import { makeMessagePi as createMockPi } from "./helpers/mock-pi.js";
 
 type TaskPanelModule = {
   installResultDelivery: (pi: ExtensionAPI, manager: unknown, opts?: unknown) => void;
@@ -20,64 +22,6 @@ before(async () => {
 // ─── Pure-function tests (tested indirectly via installResultDelivery) ─────────
 
 describe("installResultDelivery", () => {
-  function createMockManager(run?: unknown, runsDir?: string) {
-    const manager = new EventEmitter() as ReturnType<typeof EventEmitter> & {
-      getRun: (...args: unknown[]) => unknown;
-      getPersistence?: () => { getRunsDir: () => string };
-      __deliveryInstalled?: boolean;
-      listRuns?: () => unknown[];
-    };
-    manager.getRun = () => run;
-    if (runsDir) manager.getPersistence = () => ({ getRunsDir: () => runsDir });
-    return manager;
-  }
-
-  function createMockPi(): ExtensionAPI & { _calls: { content: string; customType?: string }[] } {
-    const calls: { content: string; customType?: string }[] = [];
-    const obj = {
-      sendMessage(msg: unknown, _opts?: unknown) {
-        calls.push({
-          content: (msg as { content?: string }).content ?? "",
-          customType: (msg as { customType?: string }).customType,
-        });
-      },
-      registerTool: () => {},
-      on: () => {},
-      getActiveTools: () => [],
-      setActiveTools: () => {},
-      reload: () => Promise.resolve(),
-      _calls: calls,
-    };
-    return obj as unknown as ExtensionAPI & { _calls: { content: string; customType?: string }[] };
-  }
-
-  function makeRun(overrides: Record<string, unknown> = {}) {
-    return {
-      runId: "test-run-1",
-      background: true,
-      snapshot: {
-        name: "test-workflow",
-        agentCount: 3,
-        agents: [
-          { id: "a1", status: "done", step: "agent 1", phase: "phase-1" },
-          { id: "a2", status: "done", step: "agent 2", phase: "phase-1" },
-          { id: "a3", status: "done", step: "agent 3", phase: "phase-2" },
-        ],
-        phases: [{ title: "phase-1" }, { title: "phase-2" }],
-        currentPhase: "phase-2",
-        startedAt: new Date(),
-        completedAt: new Date(),
-      },
-      result: {
-        agentCount: 3,
-        durationMs: 1500,
-        tokenUsage: { total: 50000, input: 25000, output: 25000 },
-        result: { verdict: "## All tests passed\n\nEverything looks good!" },
-      },
-      ...overrides,
-    };
-  }
-
   // ── deliverText: verdict path ──
 
   it("delivers verdict when result.result has verdict", () => {
@@ -309,22 +253,38 @@ describe("installResultDelivery", () => {
 
   // ── installResultDelivery: guard / stale ctx ──
 
-  it("installs delivery only once — second call skips listener registration", () => {
-    const pi = createMockPi();
+  it("does not deliver twice when both manager complete and promise completion fire", async () => {
+    let deliveryCount = 0;
+    let promiseCompletionCount = 0;
+    let resolveDelivery!: () => void;
+    const deliveryPromise = new Promise<void>((resolve) => {
+      resolveDelivery = resolve;
+    });
+    const pi = {
+      sendMessage: () => {
+        deliveryCount += 1;
+        return deliveryPromise.then(() => {
+          promiseCompletionCount += 1;
+        });
+      },
+    } as unknown as ExtensionAPI;
     const manager = createMockManager(makeRun());
 
     mod.installResultDelivery(pi as unknown as ExtensionAPI, manager);
-    // Second call: should only refresh holder.pi, not add another listener
     mod.installResultDelivery(pi as unknown as ExtensionAPI, manager);
-
     manager.emit("complete", { runId: "test-run-1" });
-    const calls = (pi as unknown as { _calls: { content: string }[] })._calls;
-    assert.equal(calls.length, 1); // exactly once, not twice
+    resolveDelivery();
+    await deliveryPromise;
+    await Promise.resolve();
+    assert.equal(deliveryCount, 1, "re-install plus both completion paths must still deliver exactly once");
+    assert.equal(promiseCompletionCount, 1, "the single delivery promise completed");
   });
 
   it("does not crash when sendMessage throws (stale ctx after reload)", () => {
+    let deliveryAttempts = 0;
     const pi = {
       sendMessage: (_msg: unknown, _opts?: unknown) => {
+        deliveryAttempts += 1;
         throw new Error("This extension ctx is stale");
       },
       registerTool: () => {},
@@ -336,9 +296,8 @@ describe("installResultDelivery", () => {
     const manager = createMockManager(makeRun());
 
     mod.installResultDelivery(pi as unknown as ExtensionAPI, manager);
-    // Should not throw — stale ctx is silently swallowed
     manager.emit("complete", { runId: "test-run-1" });
-    assert.ok(true, "should not throw"); // reached without crash
+    assert.equal(deliveryAttempts, 1, "delivery is attempted once before the stale-context failure is swallowed");
   });
 
   // ── Only background runs are delivered ──

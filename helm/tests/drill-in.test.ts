@@ -3,9 +3,9 @@ import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { renderDrillIn } from "../src/screens/drill-in.js";
 import { seedCodemodDrillIn } from "../src/data/mock.js";
+import { stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
 const strip = (lines: string[]) => lines.map(stripAnsi);
 
 /** 256-color xterm codes for the semantic palette (as emitted by paint()). */

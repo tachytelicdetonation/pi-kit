@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { AuditLog } from "../../src/cmux/audit-log.js";
@@ -14,7 +14,7 @@ function inject(tail: CmuxEventTail, frame: CmuxEventFrame): void {
 }
 
 test("ExitPlan permission is correlated from claude-prefixed workstream IDs and delivered once", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "claude-cmux-broker-"));
+  const directory = tempDir("claude-cmux-broker-");
   const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
   const cmux = {
     rpc: async (method: string, params: Record<string, unknown>) => {
@@ -67,5 +67,5 @@ test("ExitPlan permission is correlated from claude-prefixed workstream IDs and 
     { method: "feed.exit_plan.reply", params: { request_id: "request-1", mode: "manual" } },
   ]);
   broker.stop();
-  await rm(directory, { recursive: true, force: true });
+  removeTempDir(directory);
 });

@@ -1,21 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { HelmApp, type TuiLike } from "../src/app.js";
+import { HelmApp } from "../src/app.js";
 import { RealDataSource } from "../src/data/real.js";
 import type { UsagePort, WorkflowPort } from "../src/data/ports.js";
 import { createHelmRepository } from "../src/state/persistence.js";
 import type { AuditRecord, HelmState, Loop, LoopDefinition } from "../src/state/types.js";
+import { tempDirForTest } from "./helpers/tmp.js";
+import { fakeTui, flush, stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
-const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
-
-function fakeTui(rows: number, columns = 120): TuiLike {
-  return { terminal: { rows, columns }, requestRender() {} };
-}
 
 function workflowPort(): WorkflowPort {
   return {
@@ -100,8 +94,7 @@ function persistedSource(
   loop: Loop,
   records: AuditRecord[] = [],
 ): RealDataSource {
-  const cwd = mkdtempSync(join(tmpdir(), "helm-loop-drill-in-"));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const cwd = tempDirForTest(t, { prefix: "helm-loop-drill-in-" });
   const statePath = join(cwd, ".state", "helm.json");
   const repository = createHelmRepository(cwd, statePath);
   repository.save({ ...repository.load(), loops: [loop], audit: records });

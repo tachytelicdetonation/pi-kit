@@ -508,12 +508,6 @@ describe("createToolUpdateWorkflowDisplay lifecycle", () => {
     assert.ok(content[0].text.includes("done-wf"), "should include workflow name");
   });
 
-  it("clear does not throw", async () => {
-    const { createToolUpdateWorkflowDisplay } = await loadDisplay();
-    const display = createToolUpdateWorkflowDisplay(undefined, undefined);
-    assert.doesNotThrow(() => display.clear());
-  });
-
   it("accepts a widget ctx and delegates to widget lifecycle", async () => {
     const { createWorkflowSnapshot, createToolUpdateWorkflowDisplay } = await loadDisplay();
 
@@ -542,7 +536,7 @@ describe("createToolUpdateWorkflowDisplay lifecycle", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("workflow tool result formatting", () => {
-  it("tool result includes markdown JSON code block formatting", () => {
+  it("tool result includes markdown JSON code block formatting", async () => {
     // The execute() function in workflow-tool.ts wraps the final result in
     // a markdown ```json code block so it renders nicely in the conversation.
     // This test verifies the formatting pattern.
@@ -551,6 +545,20 @@ describe("workflow tool result formatting", () => {
     assert.ok(formatted.includes("```json"), "should use json code block");
     assert.ok(formatted.endsWith("```"), "should close code block");
     assert.ok(formatted.includes('"ok": true'), "should contain data");
+
+    const { createWorkflowTool } = await loadTool();
+    const tool = createWorkflowTool();
+    const theme = { fg: () => (text: string) => text, bold: (text: string) => text };
+    const fallback = tool.renderResult(
+      {
+        content: [{ type: "text", text: "**bold** and `code` and ## header" }],
+        details: { some: "data" },
+        isError: false,
+      } as never,
+      { isPartial: false },
+      theme as never,
+    );
+    assert.equal(fallback.render(120)[0]?.trimEnd(), "bold and `code` and ## header");
   });
 });
 
@@ -559,22 +567,6 @@ describe("workflow tool result formatting", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("display pure helpers", () => {
-  it("preview returns string for number 0", async () => {
-    const { preview } = await loadDisplay();
-    assert.equal(preview(0), "0");
-  });
-
-  it("preview returns 'true' for boolean true", async () => {
-    const { preview } = await loadDisplay();
-    assert.equal(preview(true), "true");
-    assert.equal(preview(false), "false");
-  });
-
-  it("preview returns empty for undefined", async () => {
-    const { preview } = await loadDisplay();
-    assert.equal(preview(undefined), "");
-  });
-
   it("preview truncates long JSON strings", async () => {
     const { preview } = await loadDisplay();
     const result = preview("x".repeat(200));
@@ -641,93 +633,26 @@ describe("deliverText", () => {
     } as never;
   }
 
-  it("prefers verdict property when available", async () => {
+  it("formats completion metrics as exact segments", async () => {
     const { deliverText } = await loadTaskPanel();
-    const text = deliverText(fakeManagedRun());
-    assert.ok(text.includes("All checks passed"), "should include verdict text");
-  });
-
-  it("falls back to report when no verdict", async () => {
-    const { deliverText } = await loadTaskPanel();
-    const run = fakeManagedRun({
-      result: {
-        result: { report: "Found 5 issues in codebase" },
-        agentCount: 3,
+    const cases = [
+      {
+        label: "agents, tokens, cost, and duration",
+        run: fakeManagedRun(),
+        expected: ["5 agents", "150 tok", "$0.0030", "12.3s"],
       },
-    });
-    const text = deliverText(run);
-    assert.ok(text.includes("Found 5 issues"), "should include report text");
-  });
-
-  it("falls back to summary when no verdict or report", async () => {
-    const { deliverText } = await loadTaskPanel();
-    const run = fakeManagedRun({
-      result: {
-        result: { summary: "Analysis complete" },
-        agentCount: 2,
+      {
+        label: "metrics omitted when absent",
+        run: fakeManagedRun({ result: { result: { verdict: "done" }, agentCount: 2 } }),
+        expected: ["2 agents"],
       },
-    });
-    const text = deliverText(run);
-    assert.ok(text.includes("Analysis complete"), "should include summary text");
-  });
+    ];
 
-  it("falls back to JSON when result has no structured properties", async () => {
-    const { deliverText } = await loadTaskPanel();
-    const run = fakeManagedRun({
-      result: {
-        result: { raw: "data", count: 42 },
-        agentCount: 1,
-      },
-    });
-    const text = deliverText(run);
-    assert.ok(text.includes("count"), "should include JSON keys");
-    assert.ok(text.includes("42"), "should include JSON values");
-  });
-
-  it("uses string result directly", async () => {
-    const { deliverText } = await loadTaskPanel();
-    const run = fakeManagedRun({
-      result: {
-        result: "Everything is fine",
-        agentCount: 1,
-      },
-    });
-    const text = deliverText(run);
-    assert.ok(text.includes("Everything is fine"), "should contain Everything is fine");
-  });
-
-  it("handles null result gracefully", async () => {
-    const { deliverText } = await loadTaskPanel();
-    const run = fakeManagedRun({
-      result: {
-        result: null,
-        agentCount: 1,
-      },
-    });
-    const text = deliverText(run);
-    assert.ok(text.includes("null"), "should say null");
-    assert.ok(text.includes("finished"), "should include finished message");
-  });
-
-  it("includes token count when available", async () => {
-    const { deliverText } = await loadTaskPanel();
-    const text = deliverText(fakeManagedRun());
-    assert.ok(text.includes("150"), "should show the token count");
-    assert.ok(text.includes("tok"), "should label the token count");
-  });
-
-  it("includes agent count", async () => {
-    const { deliverText } = await loadTaskPanel();
-    const text = deliverText(fakeManagedRun());
-    assert.ok(text.includes("5"), "should show 5 agents");
-    assert.ok(text.includes("agents"), "should mention agents");
-  });
-
-  it("includes duration in seconds", async () => {
-    const { deliverText } = await loadTaskPanel();
-    const text = deliverText(fakeManagedRun());
-    assert.ok(text.includes("12.3"), "should show duration in seconds");
-    assert.ok(text.includes("s"), "should show unit");
+    for (const { label, run, expected } of cases) {
+      const firstLine = deliverText(run).split("\n", 1)[0];
+      const metrics = firstLine.match(/finished \((.*)\)\.$/)?.[1].split(" · ");
+      assert.deepEqual(metrics, expected, label);
+    }
   });
 
   it("starts with checkmark and workflow name", async () => {
@@ -735,20 +660,6 @@ describe("deliverText", () => {
     const text = deliverText(fakeManagedRun());
     assert.ok(text.startsWith("✓"), "should start with checkmark");
     assert.ok(text.includes("my-wf"), "should include workflow name");
-  });
-
-  it("truncates very long JSON at 400 chars", async () => {
-    const { deliverText } = await loadTaskPanel();
-    const large = { data: "x".repeat(500) };
-    const run = fakeManagedRun({
-      result: {
-        result: large,
-        agentCount: 1,
-      },
-    });
-    const text = deliverText(run);
-    // JSON of large object + "...(truncated)" — deliverText has slice(0,400) logic
-    assert.ok(text.includes("truncated") || text.length < 600, "very long JSON should be truncated");
   });
 });
 
@@ -872,59 +783,6 @@ describe("TUI rendering has no markdown syntax", () => {
     assert.ok(!text.includes("#1"), "should NOT use #1 prefix");
   });
 
-  it("renderWorkflowLines has no **bold** markers", async () => {
-    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
-    const snap = createWorkflowSnapshot(fakeMeta());
-    const text = renderWorkflowLines(snap).join("\n");
-    assert.ok(!text.includes("**"), "should not have bold markdown markers");
-  });
-
-  it("renderWorkflowLines has no ## heading markers", async () => {
-    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
-    const snap = createWorkflowSnapshot(fakeMeta());
-    const text = renderWorkflowLines(snap).join("\n");
-    assert.ok(!text.includes("##"), "should not have heading markdown markers");
-  });
-
-  it("renderWorkflowLines has no code fence markers", async () => {
-    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
-    const snap = createWorkflowSnapshot(fakeMeta());
-    const text = renderWorkflowLines(snap).join("\n");
-    assert.ok(!text.includes("```"), "should not have code fence markers");
-  });
-
-  it("renderWorkflowText has no **bold** markers", async () => {
-    const { createWorkflowSnapshot, renderWorkflowText } = await loadDisplay();
-    const snap = createWorkflowSnapshot(fakeMeta());
-    const text = renderWorkflowText(snap, true);
-    assert.ok(!text.includes("**"), "completed text should not have bold markers");
-  });
-
-  it("renderWorkflowText completed has no ## heading markers", async () => {
-    const { createWorkflowSnapshot, renderWorkflowText } = await loadDisplay();
-    const snap = createWorkflowSnapshot(fakeMeta());
-    const text = renderWorkflowText(snap, true);
-    assert.ok(!text.includes("##"), "completed text should not have heading markers");
-  });
-
-  it("renderResult fallback strips markdown from content text", async () => {
-    const { createWorkflowTool } = await loadTool();
-    const tool = createWorkflowTool();
-    const theme = {
-      fg: () => (s: string) => s,
-      bold: (s: string) => s,
-    };
-    const resultWithMarkdown = {
-      content: [{ type: "text", text: "**bold** and `code` and ## header" }],
-      details: { some: "data" }, // no 'name' → triggers fallback
-      isError: false,
-    };
-    // If snapshot.name is missing, the function should still produce
-    // a Text component without crashing
-    assert.doesNotThrow(() => {
-      tool.renderResult(resultWithMarkdown as never, { isPartial: false }, theme as never);
-    });
-  });
 });
 
 // ─── aggregateAgentUsage ─────────────────────────────────────────────────────

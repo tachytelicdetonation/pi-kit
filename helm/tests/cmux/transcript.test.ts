@@ -1,12 +1,12 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { readAssistantOutput, transcriptOffset, truncateOutput } from "../../src/cmux/transcript.js";
 
 test("reads only non-sidechain assistant text after the captured offset", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "claude-cmux-transcript-"));
+  const directory = tempDir("claude-cmux-transcript-");
   const path = join(directory, "session.jsonl");
   try {
     await writeFile(path, `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "old" }] } })}\n`);
@@ -20,7 +20,7 @@ test("reads only non-sidechain assistant text after the captured offset", async 
     await writeFile(path, lines.map((line) => JSON.stringify(line)).join("\n") + "\n", { flag: "a" });
     assert.equal(await readAssistantOutput(path, offset), "final answer");
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    removeTempDir(directory);
   }
 });
 

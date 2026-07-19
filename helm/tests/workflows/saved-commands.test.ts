@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, it } from "node:test";
-import { withFakeHomeAsync } from "./helpers/fake-home.js";
+import { withTempDir } from "../helpers/tmp.js";
 import { makeCommandRegistryPi, makeNotifyCtx } from "./helpers/mock-pi.js";
 
 async function load() {
@@ -142,15 +139,12 @@ describe("registerSavedWorkflow", () => {
       name: "run-inline",
       script: "export const meta = { name: 't', description: 't' };\nreturn { report: 'done' };",
     };
-    const fakeHome = mkdtempSync(join(tmpdir(), "pi-dw-home-"));
-    try {
+    await withTempDir(async () => {
       registerSavedWorkflow(pi, "/cwd", wf); // no manager
 
       const { ctx } = makeNotifyCtx();
-      await withFakeHomeAsync(fakeHome, () => commands[0].handler("", ctx));
-    } finally {
-      rmSync(fakeHome, { recursive: true, force: true });
-    }
+      await commands[0].handler("", ctx);
+    }, { fakeHome: true, prefix: "pi-dw-saved-command-" });
 
     // The inline fallback ran to completion and delivered the report — proving it
     // did not crash on the missing manager and actually executed runWorkflow().

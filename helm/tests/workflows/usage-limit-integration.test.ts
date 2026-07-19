@@ -1,3 +1,4 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 /**
  * Real-session integration test for issue #26 — provider usage-limit handling.
  *
@@ -11,15 +12,14 @@
  */
 
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { WorkflowAgent } from "../../src/workflows/agent.js";
 import { WorkflowErrorCode } from "../../src/workflows/errors.js";
-import { WorkflowManager } from "../../src/workflows/workflow-manager.js";
 import { withFakeHomeAsync } from "./helpers/fake-home.js";
+import { workflowManager } from "../helpers/workflow.js";
 
 const USAGE_LIMIT_MSG = "Codex usage limit reached (plus plan). Resets in ~3h.";
 
@@ -65,8 +65,8 @@ async function withFauxSession(
   }) => Promise<void>,
 ): Promise<void> {
   const { registerFauxProvider, fauxAssistantMessage } = await loadFaux();
-  const home = mkdtempSync(join(tmpdir(), "pi-dw-i26-home-"));
-  const cwd = mkdtempSync(join(tmpdir(), "pi-dw-i26-cwd-"));
+  const home = tempDir("pi-dw-i26-home-");
+  const cwd = tempDir("pi-dw-i26-cwd-");
   const prevKey = process.env.DEEPSEEK_API_KEY;
   process.env.DEEPSEEK_API_KEY = "faux-dummy-key-not-used";
   const faux = registerFauxProvider({
@@ -86,8 +86,8 @@ async function withFauxSession(
     faux.unregister();
     if (prevKey === undefined) delete process.env.DEEPSEEK_API_KEY;
     else process.env.DEEPSEEK_API_KEY = prevKey;
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    removeTempDir(home);
+    removeTempDir(cwd);
   }
 }
 
@@ -119,7 +119,7 @@ test("a successful real turn whose text merely mentions 'rate limit' is NOT misc
 test("through the manager: a usage limit pauses the run (not fails) and resume replays the journal", () =>
   withFauxSession(async ({ cwd, model, setResponses, fauxAssistantMessage }) => {
     const managerAgent = new WorkflowAgent({ cwd, session: { model: model as never } });
-    const manager = new WorkflowManager({ cwd, agent: managerAgent });
+    const manager = workflowManager(cwd, { agent: managerAgent });
     const pausedReasons: Array<string | undefined> = [];
     manager.on("paused", (e: { reason?: string }) => pausedReasons.push(e.reason));
     manager.on("error", () => {});

@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -212,7 +212,7 @@ test("HOST-01 inherited custom tools receive the requested child cwd in their ex
 });
 
 test("AGT-02 process agent resolves tiers and forwards per-agent effort", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "workflow-process-model-"));
+  const directory = tempDir("workflow-process-model-");
   const childPath = join(directory, "fake-agent.cjs");
   writeFileSync(
     childPath,
@@ -245,12 +245,12 @@ test("AGT-02 process agent resolves tiers and forwards per-agent effort", async 
       assert.deepEqual(result, { model: "provider/small", thinkingLevel: "xhigh" });
     });
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    removeTempDir(directory);
   }
 });
 
 test("HOST-02 process agent executes inherited tools only through the parent permission boundary", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "workflow-process-agent-"));
+  const directory = tempDir("workflow-process-agent-");
   const childPath = join(directory, "fake-agent.cjs");
   writeFileSync(
     childPath,
@@ -284,6 +284,6 @@ test("HOST-02 process agent executes inherited tools only through the parent per
     assert.equal(result.tool.content[0]?.text, "ok:child");
     assert.deepEqual(calls, ["custom:child"]);
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    removeTempDir(directory);
   }
 });

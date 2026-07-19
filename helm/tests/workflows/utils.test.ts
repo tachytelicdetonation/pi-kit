@@ -149,15 +149,6 @@ describe("config", () => {
 // ─── Logger ────────────────────────────────────────────────────────────────────
 
 describe("logger", () => {
-  it("createWorkflowLogger returns logger with log/error/warn/getLogs", async () => {
-    const { createWorkflowLogger } = await loadLogger();
-    const log = createWorkflowLogger({ persist: false });
-    assert.equal(typeof log.log, "function");
-    assert.equal(typeof log.error, "function");
-    assert.equal(typeof log.warn, "function");
-    assert.equal(typeof log.getLogs, "function");
-  });
-
   it("log/error/warn do not throw and accumulate logs", async () => {
     const { createWorkflowLogger } = await loadLogger();
     const log = createWorkflowLogger({ persist: false });
@@ -185,16 +176,6 @@ describe("logger", () => {
     const log = createWorkflowLogger({ persist: false });
     const result = log.persist();
     assert.equal(result, null);
-  });
-
-  it("onLog callback is called for each message", async () => {
-    const { createWorkflowLogger } = await loadLogger();
-    const captured: string[] = [];
-    const log = createWorkflowLogger({ persist: false, onLog: (m) => captured.push(m) });
-    log.log("msg1");
-    log.warn("msg2");
-    log.error("msg3");
-    assert.deepEqual(captured, ["msg1", "msg2", "msg3"]);
   });
 });
 
@@ -342,15 +323,21 @@ describe("display", () => {
     assert.ok(text.includes("found 3 issues"), "should contain found 3 issues");
   });
 
-  it("renderWorkflowLines shows token info when available", async () => {
+  it("renderWorkflowLines formats token metrics exactly across boundaries", async () => {
     const { createWorkflowSnapshot, renderWorkflowLines } = await load();
-    const meta: WorkflowMeta = { name: "wf", description: "d" };
-    const snap = createWorkflowSnapshot(meta);
-    snap.tokenUsage = { input: 100, output: 50, total: 150, cost: 0.002 };
-    const lines = renderWorkflowLines(snap);
-    const text = lines.join("\n");
-    assert.ok(text.includes("150"), "should contain 150");
-    assert.ok(text.includes("$0.0020"), "should contain $0.0020");
+    const cases = [
+      { usage: { input: 100, output: 50, total: 150, cost: 0.002 }, expected: "150 tok · $0.0020" },
+      { usage: { input: 1_000, output: 500, total: 1_500, cost: 0.042 }, expected: "1,500 tok · $0.04" },
+      { usage: { input: 500, output: 300, total: 800 }, expected: "800 tok" },
+    ];
+
+    for (const { usage, expected } of cases) {
+      const snap = createWorkflowSnapshot({ name: "wf", description: "d" });
+      snap.tokenUsage = usage;
+      const header = renderWorkflowLines(snap)[0];
+      const metrics = header.match(/\((.*)\)$/)?.[1].split(" · ").slice(1).join(" · ");
+      assert.equal(metrics, expected);
+    }
   });
 });
 

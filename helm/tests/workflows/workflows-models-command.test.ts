@@ -11,6 +11,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
+import { makeCommandRegistryPi } from "./helpers/mock-pi.js";
 
 async function loadCommand() {
   const mod = await import("../../src/workflows/workflows-models-command.js");
@@ -21,30 +22,20 @@ describe("workflows-models-command", () => {
   describe("registerWorkflowModelsCommand", () => {
     it("registers the workflows-models command with Pi", async () => {
       const { registerWorkflowModelsCommand } = await loadCommand();
-      const commands: string[] = [];
-      const mockPi = {
-        registerCommand: mock.fn((name: string, _opts: unknown) => {
-          commands.push(name);
-        }),
-      };
+      const { pi, commands } = makeCommandRegistryPi();
 
-      registerWorkflowModelsCommand(mockPi as never);
+      registerWorkflowModelsCommand(pi);
 
-      assert.equal(mockPi.registerCommand.mock.callCount(), 1);
-      assert.equal(commands[0], "workflows-models");
+      assert.equal(commands.length, 1);
+      assert.equal(commands[0].name, "workflows-models");
     });
 
     it("provides a description", async () => {
       const { registerWorkflowModelsCommand } = await loadCommand();
-      let capturedDescription = "";
+      const { pi, commands } = makeCommandRegistryPi();
 
-      const mockPi = {
-        registerCommand: mock.fn((_name: string, opts: { description?: string }) => {
-          capturedDescription = opts.description ?? "";
-        }),
-      };
-
-      registerWorkflowModelsCommand(mockPi as never);
+      registerWorkflowModelsCommand(pi);
+      const capturedDescription = commands[0].description ?? "";
       assert.ok(capturedDescription.length > 0, "description should not be empty");
       assert.ok(capturedDescription.toLowerCase().includes("tier"), "description should mention tiers");
     });

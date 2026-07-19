@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { CustomEditor, type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { type Terminal, TUI } from "@earendil-works/pi-tui";
+import { makeCommandRegistryPi } from "./helpers/mock-pi.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -522,15 +523,6 @@ describe("WorkflowEditor", () => {
     assert.equal(state.keywordTriggerEnabled, true);
   });
 
-  it("render() returns an array of strings", () => {
-    const { editor } = createEditor();
-    const lines = editor.render(80);
-    assert.ok(Array.isArray(lines), "render() should return an array");
-    for (const ln of lines) {
-      assert.equal(typeof ln, "string", "each line should be a string");
-    }
-  });
-
   // Issue #72: a broken/mismatched host can make the base Editor's render()
   // throw on every render, including the very first one — crashing the whole
   // app at launch. WorkflowEditor.render() must degrade instead of crashing.
@@ -868,24 +860,15 @@ describe("installWorkflowEditor", () => {
 
   it("supports legacy WorkflowModeState objects without keywordTriggerWord", async () => {
     const mod = await load();
-    const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
-    const sent: Array<{ content?: string }> = [];
+    const { pi, commands, sent } = makeCommandRegistryPi();
     const state = { active: false, keywordTriggerEnabled: true };
-    const pi = {
-      registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => {
-        commands.set(name, command);
-      },
-      sendMessage: (message: { content?: string }) => {
-        sent.push(message);
-      },
-    } as unknown as ExtensionAPI;
 
     mod.registerWorkflowTriggerCommand(pi, state, {
       load: () => ({}),
       save: () => {},
     });
 
-    const command = commands.get("workflows-trigger");
+    const command = commands.find((item) => item.name === "workflows-trigger");
     assert.ok(command, "should register /workflows-trigger");
 
     await command.handler("status", {});

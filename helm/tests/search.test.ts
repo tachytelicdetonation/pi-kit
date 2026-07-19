@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { HelmApp, type TuiLike } from "../src/app.js";
+import { HelmApp } from "../src/app.js";
 import { MockDataSource } from "../src/data/mock.js";
 import { renderSearch } from "../src/screens/search.js";
+import { fakeTui, stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
 const strip = (lines: string[]) => lines.map(stripAnsi);
 
-function fakeTui(rows: number, columns: number): TuiLike {
-  return { terminal: { rows, columns }, requestRender() {} };
-}
 
 // ── render safety ─────────────────────────────────────────────────────────────
 const source = new MockDataSource();
@@ -35,13 +32,6 @@ test("search filters the corpus case-insensitively; empty query returns nothing"
   assert.ok(esm.length >= 4, "esm spans goals + workflows + a precedent");
   assert.ok(esm.some((r) => r.kind === "workflow" && r.label === "codemod"));
   assert.equal(source.search("ESM").length, esm.length, "case-insensitive");
-});
-
-test("search is FOREVER — it finds an ARCHIVED goal", () => {
-  const hits = source.search("auth");
-  assert.equal(hits.length, 1, "the archived 'auth v2 rollout' is found");
-  assert.equal(hits[0].kind, "goal");
-  assert.match(hits[0].sublabel ?? "", /archived/);
 });
 
 test("search spans decisions, precedents, PRs and loop runs", () => {
@@ -81,6 +71,10 @@ test("enter on a workflow result navigates to its 6c drill-in", () => {
 });
 
 test("enter on the ARCHIVED goal navigates to its closeout (search reaches archived)", () => {
+  const archived = source.search("auth");
+  assert.equal(archived.length, 1, "the archived goal remains searchable");
+  assert.equal(archived[0]?.sublabel, "archived", "the search result carries its archived state marker");
+
   const app = new HelmApp(fakeTui(30, 120), theme, () => {});
   app.handleInput("/");
   for (const ch of "auth") app.handleInput(ch);

@@ -4,22 +4,9 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { HelmApp, type TuiLike } from "../src/app.js";
 import { MockDataSource } from "../src/data/mock.js";
 import type { DataSource } from "../src/data/source.js";
+import { flush, stripAnsi, trackedTui as fakeTui } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-/** A fake tui with mutable, live terminal dimensions and a render counter. */
-function fakeTui(rows: number, columns: number) {
-  let renders = 0;
-  const tui: TuiLike = {
-    terminal: { rows, columns },
-    requestRender() {
-      renders += 1;
-    },
-  };
-  return { tui, renders: () => renders };
-}
 
 for (const rows of [30, 24, 18, 5, 4, 3]) {
   test(`render emits exactly ${rows} lines, each within width`, () => {
@@ -81,16 +68,6 @@ test("backspace deletes the last buffered char", () => {
   app.handleInput("\x7f");
   const promptLine = app.render(80).map(stripAnsi).find((l) => l.includes("❯"));
   assert.match(promptLine!, /❯ ab$/);
-});
-
-test("esc at home with an empty buffer never quits", () => {
-  const { tui } = fakeTui(20, 80);
-  let closed = false;
-  const app = new HelmApp(tui, theme, () => {
-    closed = true;
-  });
-  app.handleInput("\x1b");
-  assert.equal(closed, false);
 });
 
 test("'q' with an empty buffer types to the prompt; ctrl+q exits via done()", () => {
@@ -212,7 +189,10 @@ test("enter on a 6c worktree row pushes the 4a session", () => {
 
 test("esc ascends: session → drill-in → home, then stays at home", () => {
   const { tui } = fakeTui(30, 120);
-  const app = new HelmApp(tui, theme, () => {});
+  let closed = false;
+  const app = new HelmApp(tui, theme, () => {
+    closed = true;
+  });
   intoSession(app);
   // esc → back to 6c drill-in
   app.handleInput("\x1b");
@@ -226,16 +206,7 @@ test("esc ascends: session → drill-in → home, then stays at home", () => {
   app.handleInput("\x1b");
   lines = app.render(120).map(stripAnsi);
   assert.match(lines[0], /mission control/, "esc at home stays at home");
-});
-
-test("esc at home with an empty buffer never quits (the descend spine)", () => {
-  const { tui } = fakeTui(20, 80);
-  let closed = false;
-  const app = new HelmApp(tui, theme, () => {
-    closed = true;
-  });
-  app.handleInput("\x1b");
-  assert.equal(closed, false);
+  assert.equal(closed, false, "esc at home must not invoke the app close callback");
 });
 
 test("j/k selection is per-screen and clamps independently", () => {

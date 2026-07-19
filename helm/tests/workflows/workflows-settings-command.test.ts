@@ -9,6 +9,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
+import { makeCommandRegistryPi } from "./helpers/mock-pi.js";
 
 async function loadCommand() {
   return import("../../src/workflows/workflows-settings-command.js");
@@ -17,17 +18,11 @@ async function loadCommand() {
 type Handler = (args: string, ctx: unknown) => Promise<void>;
 
 function fakePi() {
-  const sent: { customType: string; content: string; display?: boolean }[] = [];
-  const captured: { name?: string; description?: string; handler?: Handler } = {};
-  const pi = {
-    registerCommand: mock.fn((name: string, opts: { description?: string; handler: Handler }) => {
-      captured.name = name;
-      captured.description = opts.description;
-      captured.handler = opts.handler;
-    }),
-    sendMessage: mock.fn(async (message: { customType: string; content: string; display?: boolean }) => {
-      sent.push(message);
-    }),
+  const { pi, commands, sent } = makeCommandRegistryPi();
+  const captured = {
+    get name() { return commands[0]?.name; },
+    get description() { return commands[0]?.description; },
+    get handler() { return commands[0]?.handler as Handler | undefined; },
   };
   return { pi, sent, captured };
 }

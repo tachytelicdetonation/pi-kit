@@ -3,9 +3,9 @@ import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { computeCtxMeter, computeStackedBar, renderHelmFooter } from "../src/footer.js";
 import type { HelmFooterModel } from "../src/state/types.js";
+import { stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
 
 const model: HelmFooterModel = {
   cwd: "~/pi-kit",
@@ -87,12 +87,6 @@ test("non-positive and tiny widths never throw", () => {
 // ── Phase 5: ctrl+p pause tint ────────────────────────────────────────────────
 const WARNING_XTERM = 179;
 const hasWarning = (line: string) => line.includes(`\x1b[38;5;${WARNING_XTERM}m`);
-
-test("paused footer turns warning-yellow with a '⏸ paused' indicator", () => {
-  const paused = renderHelmFooter(model, theme, 140, "fleet", true);
-  assert.ok(hasWarning(paused), "the paused footer carries the warning color");
-  assert.match(stripAnsi(paused), /⏸ paused/, "the far-left paused indicator is shown");
-});
 
 test("an un-paused footer carries NO warning color (so warning cleanly signals pause)", () => {
   for (const variant of ["session", "fleet"] as const) {

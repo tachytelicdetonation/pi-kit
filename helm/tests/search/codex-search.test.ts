@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import {
@@ -100,7 +100,7 @@ test("domain normalization and result filtering fail closed", () => {
 });
 
 async function createFakeCodex(body: string): Promise<{ dir: string; executable: string }> {
-  const dir = await mkdtemp(join(tmpdir(), "fake-codex-"));
+  const dir = tempDir("fake-codex-");
   const executable = join(dir, "codex");
   await writeFile(executable, `#!/usr/bin/env node\n${body}\n`, "utf8");
   await chmod(executable, 0o755);
@@ -126,7 +126,7 @@ process.stdin.on("end", async () => {
     assert.equal(result.meta.tokensUsed, 1234);
     assert.equal(result.meta.searchEvents, 1);
   } finally {
-    await rm(fake.dir, { recursive: true, force: true });
+    removeTempDir(fake.dir);
   }
 });
 
@@ -142,6 +142,6 @@ test("runner terminates an aborted Codex subprocess", async () => {
     );
     assert.ok(Date.now() - started < 3_000);
   } finally {
-    await rm(fake.dir, { recursive: true, force: true });
+    removeTempDir(fake.dir);
   }
 });

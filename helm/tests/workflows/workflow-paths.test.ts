@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { basename, join, normalize } from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -14,13 +14,13 @@ import {
 import { withFakeHome } from "./helpers/fake-home.js";
 
 function withIsolatedHome(fn: (home: string, cwd: string) => void): void {
-  const home = mkdtempSync(join(tmpdir(), "pi-dw-home-"));
-  const cwd = mkdtempSync(join(tmpdir(), "pi-dw-project-"));
+  const home = tempDir("pi-dw-home-");
+  const cwd = tempDir("pi-dw-project-");
   try {
     withFakeHome(home, () => fn(home, cwd));
   } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    removeTempDir(home);
+    removeTempDir(cwd);
   }
 }
 

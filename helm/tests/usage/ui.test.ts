@@ -4,6 +4,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { computeCtxMeter, computeStackedBar, formatUsageDetails, renderFooter } from "../../src/usage/ui.js";
 import type { FooterViewModel } from "../../src/usage/ui.js";
 import type { ProviderViewState, UsageViewModel } from "../../src/usage/types.js";
+import { stripAnsi } from "../helpers/tui.js";
 
 const plainTheme = {
   fg: (_color: string, text: string) => text,
@@ -32,8 +33,6 @@ const footer: FooterViewModel = {
   effort: "high",
   providers: [providerState("codex", 83), providerState("claude", 91), providerState("kimi", 16)],
 };
-
-const stripAnsi = (line: string) => line.replace(/\[[0-9;]*m/g, "");
 
 for (const width of [140, 110, 109, 90, 89, 70, 69, 40, 8]) {
   test(`footer never exceeds ${width} columns`, () => {

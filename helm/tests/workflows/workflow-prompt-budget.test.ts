@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import {
@@ -64,7 +64,7 @@ async function withRenderedWorkflow(
     };
   }) => Promise<void>,
 ): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), "workflow-prompt-budget-"));
+  const root = tempDir("workflow-prompt-budget-");
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
   try {
@@ -107,6 +107,6 @@ async function withRenderedWorkflow(
   } finally {
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    await rm(root, { recursive: true, force: true });
+    removeTempDir(root);
   }
 }

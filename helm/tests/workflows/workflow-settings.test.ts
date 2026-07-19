@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { describe, it } from "node:test";
 import { WORKFLOW_SETTINGS_FILE } from "../../src/workflows/config.js";
@@ -14,11 +14,11 @@ import {
 import { withFakeHome } from "./helpers/fake-home.js";
 
 function withSettingsPath(fn: (settingsPath: string) => void): void {
-  const dir = mkdtempSync(join(tmpdir(), "pi-dynamic-workflows-settings-"));
+  const dir = tempDir("pi-dynamic-workflows-settings-");
   try {
     fn(join(dir, "nested", "settings.json"));
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   }
 }
 
@@ -85,7 +85,7 @@ describe("workflow settings", () => {
   });
 
   it("merges project settings over global settings when cwd is provided", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-dynamic-workflows-project-settings-"));
+    const dir = tempDir("pi-dynamic-workflows-project-settings-");
     const cwd = join(dir, "project");
     const fakeHome = join(dir, "home");
     try {
@@ -105,12 +105,12 @@ describe("workflow settings", () => {
         });
       });
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
   it("saves cwd preferences globally without creating a project override", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-dynamic-workflows-project-settings-"));
+    const dir = tempDir("pi-dynamic-workflows-project-settings-");
     const cwd = join(dir, "project");
     const fakeHome = join(dir, "home");
     try {
@@ -121,12 +121,12 @@ describe("workflow settings", () => {
         assert.equal(existsSync(getWorkflowProjectSettingsPath(cwd)), false);
       });
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
   it("saves cwd preferences into an existing project override", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-dynamic-workflows-project-settings-"));
+    const dir = tempDir("pi-dynamic-workflows-project-settings-");
     const cwd = join(dir, "project");
     const fakeHome = join(dir, "home");
     try {
@@ -142,7 +142,7 @@ describe("workflow settings", () => {
         });
       });
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -243,7 +243,7 @@ describe("workflow settings", () => {
   });
 
   it("project persistAgentSessions overrides the global setting", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-dynamic-workflows-persist-settings-"));
+    const dir = tempDir("pi-dynamic-workflows-persist-settings-");
     const cwd = join(dir, "project");
     const fakeHome = join(dir, "home");
     try {
@@ -260,7 +260,7 @@ describe("workflow settings", () => {
         });
       });
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 

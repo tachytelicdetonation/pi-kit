@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { HelmApp, type TuiLike } from "../src/app.js";
+import { HelmApp } from "../src/app.js";
 import { MockDataSource, seedUsageDetail } from "../src/data/mock.js";
 import { overlayPopover, usagePopoverLines } from "../src/screens/popover.js";
+import { fakeTui, stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
 const strip = (lines: string[]) => lines.map(stripAnsi);
 
-function fakeTui(rows: number, columns: number): TuiLike {
-  return { terminal: { rows, columns }, requestRender() {} };
-}
 
 // ── usagePopoverLines: bounded box with the detail ──────────────────────────────
 for (const width of [120, 90, 70, 40, 20, 8, 4, 1, 0]) {

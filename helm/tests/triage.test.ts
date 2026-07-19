@@ -1,16 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HelmApp, type TuiLike } from "../src/app.js";
+import { HelmApp } from "../src/app.js";
 import { MockDataSource } from "../src/data/mock.js";
 import { nextNeedsYouId } from "../src/state/selectors.js";
 import { seedState } from "../src/data/mock.js";
+import { fakeTui, stripAnsi } from "./helpers/tui.js";
 
 const theme = { getColorMode: () => "256color" as const };
-const stripAnsi = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
-
-function fakeTui(rows: number, columns: number): TuiLike {
-  return { terminal: { rows, columns }, requestRender() {} };
-}
 
 const header = (app: HelmApp) => stripAnsi(app.render(120)[0]);
 

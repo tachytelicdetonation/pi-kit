@@ -1,6 +1,6 @@
+import { removeTempDir, tempDir } from "../helpers/tmp.js";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { readSnapshotCache, writeSnapshotCache } from "../../src/usage/cache.js";
@@ -16,7 +16,7 @@ const snapshot: UsageSnapshot = {
 };
 
 test("sanitized cache round-trips normalized snapshots only", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "usage-health-"));
+  const directory = tempDir("usage-health-");
   const path = join(directory, "nested", "cache.json");
   try {
     await writeSnapshotCache(path, [snapshot]);
@@ -26,12 +26,12 @@ test("sanitized cache round-trips normalized snapshots only", async () => {
     assert.equal(loaded[0]?.source, "extension-cache");
     assert.equal(loaded[0]?.buckets[0]?.usedPercent, 17);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    removeTempDir(directory);
   }
 });
 
 test("automatic refresh is capped across session events by persisted checkedAt timestamps", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "usage-health-throttle-"));
+  const directory = tempDir("usage-health-throttle-");
   const paths = resolveUsagePaths({ HOME: directory, PI_CODING_AGENT_DIR: join(directory, "pi") });
   let currentNow = 10_000_000;
   const checkedAt = { codex: currentNow, claude: currentNow, kimi: currentNow };
@@ -67,12 +67,12 @@ test("automatic refresh is capped across session events by persisted checkedAt t
     await service.refreshIfOlderThan(30 * 60_000);
     assert.deepEqual(calls, { codex: 1, claude: 1, kimi: 1 });
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    removeTempDir(directory);
   }
 });
 
 test("service preserves cached data when a provider refresh fails", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "usage-health-service-"));
+  const directory = tempDir("usage-health-service-");
   const paths = resolveUsagePaths({ HOME: directory, PI_CODING_AGENT_DIR: join(directory, "pi") });
   try {
     await writeSnapshotCache(paths.cacheFile, [snapshot]);
@@ -96,6 +96,6 @@ test("service preserves cached data when a provider refresh fails", async () => 
     assert.equal(codex?.snapshot?.buckets[0]?.usedPercent, 17);
     assert.equal(codex?.error, "offline");
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    removeTempDir(directory);
   }
 });
