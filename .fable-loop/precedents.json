@@ -1,0 +1,21 @@
+{
+  "_format": "Project-scope precedents for pi-kit, merged with the protocol-scope file at run start.",
+  "precedents": [
+    {
+      "id": "data-truthfulness",
+      "rule": "'Working as expected' includes data truthfulness: helm UI must never claim success or completion before the underlying command/handoff actually completes; suppression/optimistic states must be justified against a completion receipt.",
+      "provenance": "run 1 interpretation delta (~60% of fixes were data-layer); run 2 R3 'UI claiming success before command completion'"
+    },
+    {
+      "id": "terminal-native-background",
+      "rule": "helm screens keep the terminal-native background — #17181c is a design token for mocks, never painted over the terminal's own background.",
+      "provenance": "run 2 scope decision, user-confirmed"
+    },
+    {
+      "id": "in-flight-not-stale",
+      "rule": "Worktrees and branches belonging to an in-flight fable-loop run (planfile status not terminal) are never stale — loops must not flag or clean them.",
+      "provenance": "test-loop trial 20260718: flagged run 3's live worktrees as stale; user ruled ignore-as-precedent"
+    }
+  ],
+  "_declined": []
+}
