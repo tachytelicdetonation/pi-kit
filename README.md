@@ -1,19 +1,40 @@
 # pi-kit
 
-My personal collection of Pi extensions — vendored (with fixes) and/or custom.
-Each subfolder is a **self-contained, independently installable Pi package**, so
-they can be worked on and installed in parallel.
+Personal extensions for the Pi coding agent. The main package is **Helm**, a
+full-screen terminal interface for workflows, background tasks, session history,
+and usage monitoring.
 
-| Folder | What it is | Upstream |
-|---|---|---|
-| `helm/` | Helm — mission-control TUI with dynamic workflows, Claude-cmux fleets, usage health, and Codex search folded in as one Pi extension. | Custom |
+## Helm
 
-Vendored extensions keep the upstream `LICENSE` file and credit the original
-author in their own README; see each folder. Fixes are marked with
-`FIX (pi-kit):` comments so they survive an upstream re-sync.
+[Read the interface guide](helm/README.md) for the screen map, controls, and
+workflow behavior. The [workflow documentation](helm/docs/workflows/README.md)
+covers the workflow subsystem.
 
-## Install one
+## Install from a local checkout
+
+With Pi already installed, clone this repository and install the Helm package:
 
 ```bash
-pi install /Users/tanmaydeshmukh/Projects/pi-kit/<folder>
+git clone https://github.com/tachytelicdetonation/pi-kit.git
+cd pi-kit
+pi install "$PWD/helm"
 ```
+
+In the Pi terminal interface, run:
+
+```text
+/helm
+```
+
+Helm depends on the host Pi environment and its configured tools. See
+[helm/package.json](helm/package.json) for package and peer dependencies, and the
+Helm guide for the features that rely on external tools.
+
+## Development and attribution
+
+Each extension is a separate package. Helm's source, build commands, and tests
+live under [helm](helm). The repository also retains design documents and
+previews used during development.
+
+Vendored components retain their upstream attribution and license files. Consult
+the component documentation when reusing code.
